@@ -10,11 +10,11 @@ RUN apt-get update && apt-get install -y \
     libssl-dev \
     && rm -rf /var/lib/apt/lists/*
 
-# Copy manifests from blackBook directory
-COPY blackBook/Cargo.toml blackBook/Cargo.lock ./
+# Copy manifests
+COPY Cargo.toml Cargo.lock ./
 
-# Copy source code from blackBook directory
-COPY blackBook/src ./src
+# Copy source code
+COPY src ./src
 
 # Build the application in release mode
 RUN cargo build --release
@@ -34,8 +34,8 @@ RUN apt-get update && apt-get install -y \
 # Copy the built binary from builder stage
 COPY --from=builder /app/target/release/blackbook-prediction-market /app/blackbook
 
-# Copy the HTML frontend from blackBook directory
-COPY blackBook/index.html /app/index.html
+# Copy the HTML frontend
+COPY index.html /app/index.html
 
 # Create data directory for sled database
 RUN mkdir -p /app/data
