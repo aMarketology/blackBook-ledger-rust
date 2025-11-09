@@ -1,6 +1,6 @@
 # Multi-stage Dockerfile for BlackBook Blockchain + Frontend
 # Stage 1: Build the Rust binary
-FROM rust:1.75-slim AS builder
+FROM rust:1.82-slim AS builder
 
 WORKDIR /app
 
