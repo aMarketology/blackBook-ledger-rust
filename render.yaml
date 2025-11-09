@@ -9,8 +9,8 @@ services:
     plan: starter
     region: oregon
     branch: master
-    dockerfilePath: ./Dockerfile
-    dockerContext: ./blackBook
+    dockerfilePath: ./blackBook/Dockerfile
+    dockerContext: .
     envVars:
       - key: PORT
         value: 3000
