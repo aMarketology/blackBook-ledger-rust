@@ -1,0 +1,27 @@
+version: '3.8'
+
+services:
+  blackbook:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: blackbook-blockchain
+    ports:
+      - "3000:3000"
+    environment:
+      - RUST_LOG=info
+      - PORT=3000
+    volumes:
+      # Persist the blockchain database
+      - blackbook-data:/app/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+volumes:
+  blackbook-data:
+    driver: local

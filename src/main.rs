@@ -503,8 +503,14 @@ async fn main() {
                 .allow_headers(Any),
         );
 
-    let addr = SocketAddr::from(([127, 0, 0, 1], 3000));
-    println!("🚀 BlackBook Prediction Market starting on http://{}", addr);
+    // Bind to 0.0.0.0 for deployment (accepts external connections)
+    // Use environment variable PORT or default to 3000
+    let port = std::env::var("PORT")
+        .unwrap_or_else(|_| "3000".to_string())
+        .parse::<u16>()
+        .unwrap_or(3000);
+    let addr = SocketAddr::from(([0, 0, 0, 0], port));
+    println!("🚀 BlackBook Prediction Market starting on http://0.0.0.0:{}", port);
     println!("");
     println!("📚 HTTP REST API Endpoints (Port 3000):");
     println!("   GET  /health - Health check");
