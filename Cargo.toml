@@ -1,0 +1,68 @@
+[package]
+name = "blackbook-prediction-market"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+# Web framework
+axum = "0.7"
+tokio = { version = "1.0", features = ["full"] }
+tower = "0.4"
+tower-http = { version = "0.5", features = ["cors", "fs"] }
+
+# Serialization
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+
+# Utilities
+uuid = { version = "1.0", features = ["v4", "serde"] }
+chrono = { version = "0.4", features = ["serde"] }
+
+# Logging
+tracing = "0.1"
+tracing-subscriber = "0.3"
+
+# Math for AMM calculations
+rust_decimal = { version = "1.32", features = ["serde"] }
+rust_decimal_macros = "1.32"
+
+# HTTP client for blockchain interaction
+reqwest = { version = "0.11", features = ["json"] }
+
+# Cryptographic dependencies for hot upgrades
+sha2 = "0.10"
+hex = "0.4"
+
+# Web scraping for real-world event data
+scraper = "0.17"
+
+# Cryptography for blockchain
+sha3 = "0.10"
+ripemd = "0.1"
+secp256k1 = { version = "0.28", features = ["rand", "recovery", "serde"] }
+rand = "0.8"
+
+# Blockchain specific
+merkle = "1.0"
+bincode = "1.3"
+
+# Database for persistence
+sled = "0.34"
+
+# Networking
+libp2p = { version = "0.53", features = ["tcp", "mdns", "noise", "yamux", "gossipsub", "identify"] }
+
+# Text processing for ObjectWire integration
+regex = "1.10"
+
+# RSS parsing for Google News integration
+rss = "2.0"
+feed-rs = "1.3"
+# Optional dependencies
+sqlx = { version = "0.7", features = ["runtime-tokio-native-tls", "sqlite", "chrono", "uuid"], optional = true }
+
+# Environment configuration
+dotenv = "0.15"
+
+[dev-dependencies]
+tokio-test = "0.4"
