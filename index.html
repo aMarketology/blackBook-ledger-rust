@@ -1,705 +1,354 @@
-<!DOCTYPE html><!DOCTYPE html>
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>BlackBook L1 - Live Blockchain Ledger</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
 
-<html lang="en"><html lang="en">
-
-<head><head>
-
-    <meta charset="UTF-8">    <meta charset="UTF-8">
-
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-
-    <title>BlackBook Blockchain Ledger - Live Feed</title>    <title>BlackBook L1 - Live Blockchain Ledger</title>
-
-    <style>    <style>
-
-        * {        * {
-
-            margin: 0;            margin: 0;
-
-            padding: 0;            padding: 0;
-
-            box-sizing: border-box;            box-sizing: border-box;
-
-        }        }
-
-
-
-        body {        body {
-
-            font-family: 'Courier New', monospace;            font-family: 'Courier New', monospace;
-
-            background: linear-gradient(135deg, #0a0a0a 0%, #1a1a1a 100%);            background: #0a0a0a;
-
-            color: #e0e0e0;            color: #f0f0f0;
-
-            min-height: 100vh;            line-height: 1.6;
-
-            padding: 20px;        }
-
+        body {
+            font-family: 'Courier New', monospace;
+            background: #0a0a0a;
+            color: #f0f0f0;
+            line-height: 1.6;
         }
 
         .container {
-
-        .container {            max-width: 1400px;
-
-            max-width: 1400px;            margin: 0 auto;
-
-            margin: 0 auto;            padding: 20px;
-
-        }        }
-
-
-
-        .header {        header {
-
-            text-align: center;            text-align: center;
-
-            padding: 30px 0;            padding: 40px 20px;
-
-            border-bottom: 2px solid #333;            border-bottom: 3px solid #e63946;
-
-            margin-bottom: 30px;            background: linear-gradient(180deg, #1a1a1a 0%, #0a0a0a 100%);
-
-        }            margin-bottom: 30px;
-
+            max-width: 1400px;
+            margin: 0 auto;
+            padding: 20px;
         }
 
-        .header h1 {
-
-            font-size: 2.5em;        h1 {
-
-            color: #fff;            font-size: 3rem;
-
-            text-shadow: 0 0 10px rgba(255, 255, 255, 0.3);            color: #f5deb3;
-
-            margin-bottom: 10px;            text-shadow: 0 0 20px rgba(230, 57, 70, 0.5);
-
-        }            margin-bottom: 10px;
-
+        header {
+            text-align: center;
+            padding: 40px 20px;
+            border-bottom: 3px solid #e63946;
+            background: linear-gradient(180deg, #1a1a1a 0%, #0a0a0a 100%);
+            margin-bottom: 30px;
         }
 
-        .header .subtitle {
-
-            color: #888;        .subtitle {
-
-            font-size: 1.1em;            font-size: 1.2rem;
-
-        }            color: #d4a574;
-
+        h1 {
+            font-size: 3rem;
+            color: #f5deb3;
+            text-shadow: 0 0 20px rgba(230, 57, 70, 0.5);
+            margin-bottom: 10px;
         }
 
-        .live-indicator {
-
-            display: inline-flex;        .stats-grid {
-
-            align-items: center;            display: grid;
-
-            gap: 8px;            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-
-            background: rgba(0, 255, 0, 0.1);            gap: 20px;
-
-            padding: 8px 16px;            margin-bottom: 40px;
-
-            border-radius: 20px;        }
-
-            margin-top: 15px;
-
-        }        .stat-card {
-
-            background: #1a1a1a;
-
-        .live-indicator .dot {            border: 2px solid #e63946;
-
-            width: 10px;            border-radius: 8px;
-
-            height: 10px;            padding: 20px;
-
-            background: #00ff00;            text-align: center;
-
-            border-radius: 50%;        }
-
-            animation: pulse 2s infinite;
-
-        }        .stat-value {
-
-            font-size: 2rem;
-
-        @keyframes pulse {            color: #e63946;
-
-            0%, 100% { opacity: 1; }            font-weight: bold;
-
-            50% { opacity: 0.5; }            display: block;
-
-        }            margin-bottom: 5px;
-
+        .subtitle {
+            font-size: 1.2rem;
+            color: #d4a574;
         }
 
         .stats-grid {
-
-            display: grid;        .stat-label {
-
-            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));            font-size: 0.9rem;
-
-            gap: 20px;            color: #d4a574;
-
-            margin-bottom: 30px;            text-transform: uppercase;
-
-        }        }
-
-
-
-        .stat-card {        .feed-header {
-
-            background: rgba(255, 255, 255, 0.05);            background: #1a1a1a;
-
-            border: 1px solid rgba(255, 255, 255, 0.1);            border: 2px solid #e63946;
-
-            border-radius: 12px;            padding: 15px 20px;
-
-            padding: 25px;            margin-bottom: 20px;
-
-            text-align: center;            border-radius: 8px;
-
-            transition: all 0.3s ease;        }
-
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 20px;
+            margin-bottom: 40px;
         }
 
-        .feed-header h2 {
-
-        .stat-card:hover {            color: #f5deb3;
-
-            background: rgba(255, 255, 255, 0.08);            font-size: 1.5rem;
-
-            transform: translateY(-2px);        }
-
-            box-shadow: 0 5px 15px rgba(0, 0, 0, 0.3);
-
-        }        .live-indicator {
-
-            display: inline-block;
-
-        .stat-card .label {            width: 10px;
-
-            color: #888;            height: 10px;
-
-            font-size: 0.9em;            background: #00ff00;
-
-            text-transform: uppercase;            border-radius: 50%;
-
-            letter-spacing: 1px;            margin-right: 10px;
-
-            margin-bottom: 10px;            animation: pulse 2s infinite;
-
-        }        }
-
-
-
-        .stat-card .value {        @keyframes pulse {
-
-            font-size: 2em;            0%, 100% { opacity: 1; }
-
-            font-weight: bold;            50% { opacity: 0.3; }
-
-            color: #fff;        }
-
+        .stat-card {
+            background: #1a1a1a;
+            border: 2px solid #e63946;
+            border-radius: 8px;
+            padding: 20px;
+            text-align: center;
         }
 
-        .transaction-feed {
+        .stat-value {
+            font-size: 2rem;
+            color: #e63946;
+            font-weight: bold;
+            display: block;
+            margin-bottom: 5px;
+        }
 
-        .feed-container {            background: #1a1a1a;
-
-            background: rgba(0, 0, 0, 0.3);            border: 2px solid #e63946;
-
-            border: 1px solid rgba(255, 255, 255, 0.1);            border-radius: 8px;
-
-            border-radius: 12px;            padding: 20px;
-
-            padding: 25px;            max-height: 600px;
-
-        }            overflow-y: auto;
-
+        .stat-label {
+            font-size: 0.9rem;
+            color: #d4a574;
+            text-transform: uppercase;
         }
 
         .feed-header {
-
-            display: flex;        .transaction-item {
-
-            justify-content: space-between;            background: #0a0a0a;
-
-            align-items: center;            border-left: 4px solid #e63946;
-
-            margin-bottom: 20px;            padding: 15px;
-
-            padding-bottom: 15px;            margin-bottom: 15px;
-
-            border-bottom: 1px solid rgba(255, 255, 255, 0.1);            border-radius: 4px;
-
-        }            animation: slideIn 0.3s ease;
-
+            background: #1a1a1a;
+            border: 2px solid #e63946;
+            padding: 15px 20px;
+            margin-bottom: 20px;
+            border-radius: 8px;
         }
 
         .feed-header h2 {
+            color: #f5deb3;
+            font-size: 1.5rem;
+        }
 
-            font-size: 1.5em;        @keyframes slideIn {
+        .live-indicator {
+            display: inline-block;
+            width: 10px;
+            height: 10px;
+            background: #00ff00;
+            border-radius: 50%;
+            margin-right: 10px;
+            animation: pulse 2s infinite;
+        }
 
-            color: #fff;            from {
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.3; }
+        }
 
-        }                opacity: 0;
+        .transaction-feed {
+            background: #1a1a1a;
+            border: 2px solid #e63946;
+            border-radius: 8px;
+            padding: 20px;
+            max-height: 600px;
+            overflow-y: auto;
+        }
 
-                transform: translateX(-20px);
-
-        .transaction {            }
-
-            background: rgba(255, 255, 255, 0.03);            to {
-
-            border-left: 3px solid #555;                opacity: 1;
-
-            padding: 15px;                transform: translateX(0);
-
-            margin-bottom: 10px;            }
-
-            border-radius: 6px;        }
-
-            transition: all 0.3s ease;
-
-            animation: slideIn 0.5s ease;        .transaction-item.bet {
-
-        }            border-left-color: #ffaa00;
-
+        .transaction-item {
+            background: #0a0a0a;
+            border-left: 4px solid #e63946;
+            padding: 15px;
+            margin-bottom: 15px;
+            border-radius: 4px;
+            animation: slideIn 0.3s ease;
         }
 
         @keyframes slideIn {
-
-            from {        .transaction-item.transfer {
-
-                opacity: 0;            border-left-color: #00aaff;
-
-                transform: translateX(-20px);        }
-
+            from {
+                opacity: 0;
+                transform: translateX(-20px);
             }
-
-            to {        .transaction-header {
-
-                opacity: 1;            display: flex;
-
-                transform: translateX(0);            justify-content: space-between;
-
-            }            align-items: center;
-
-        }            margin-bottom: 10px;
-
+            to {
+                opacity: 1;
+                transform: translateX(0);
+            }
         }
 
-        .transaction:hover {
-
-            background: rgba(255, 255, 255, 0.06);        .transaction-type {
-
-            transform: translateX(5px);            background: #e63946;
-
-        }            color: #fff;
-
-            padding: 4px 12px;
-
-        .transaction.bet {            border-radius: 4px;
-
-            border-left-color: #00ff88;            font-size: 0.8rem;
-
-        }            font-weight: bold;
-
-            text-transform: uppercase;
-
-        .transaction.transfer {        }
-
-            border-left-color: #0088ff;
-
-        }        .transaction-type.bet {
-
-            background: #ffaa00;
-
-        .transaction.deposit {        }
-
+        .transaction-item.bet {
             border-left-color: #ffaa00;
+        }
 
-        }        .transaction-type.transfer {
+        .transaction-item.transfer {
+            border-left-color: #00aaff;
+        }
 
-            background: #00aaff;
-
-        .tx-header {        }
-
+        .transaction-header {
             display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 10px;
+        }
 
-            justify-content: space-between;        .transaction-time {
-
-            align-items: center;            color: #d4a574;
-
-            margin-bottom: 8px;            font-size: 0.85rem;
-
-        }        }
-
-
-
-        .tx-type {        .transaction-details {
-
-            display: inline-block;            color: #f0f0f0;
-
-            padding: 4px 12px;            font-size: 0.95rem;
-
-            border-radius: 12px;            line-height: 1.8;
-
-            font-size: 0.85em;        }
-
+        .transaction-type {
+            background: #e63946;
+            color: #fff;
+            padding: 4px 12px;
+            border-radius: 4px;
+            font-size: 0.8rem;
             font-weight: bold;
+            text-transform: uppercase;
+        }
 
-            text-transform: uppercase;        .transaction-amount {
+        .transaction-type.bet {
+            background: #ffaa00;
+        }
 
-        }            color: #00ff88;
+        .transaction-type.transfer {
+            background: #00aaff;
+        }
 
+        .transaction-time {
+            color: #d4a574;
+            font-size: 0.85rem;
+        }
+
+        .transaction-details {
+            color: #f0f0f0;
+            font-size: 0.95rem;
+            line-height: 1.8;
+        }
+
+        .transaction-amount {
+            color: #00ff88;
             font-weight: bold;
+        }
 
-        .tx-type.bet {        }
-
-            background: rgba(0, 255, 136, 0.2);
-
-            color: #00ff88;        .loading {
-
-        }            text-align: center;
-
+        .loading {
+            text-align: center;
             padding: 40px;
-
-        .tx-type.transfer {            color: #d4a574;
-
-            background: rgba(0, 136, 255, 0.2);            font-size: 1.2rem;
-
-            color: #0088ff;        }
-
+            color: #d4a574;
+            font-size: 1.2rem;
         }
 
         .error {
-
-        .tx-type.deposit {            background: #ff0000;
-
-            background: rgba(255, 170, 0, 0.2);            color: #fff;
-
-            color: #ffaa00;            padding: 15px;
-
-        }            border-radius: 4px;
-
+            background: #ff0000;
+            color: #fff;
+            padding: 15px;
+            border-radius: 4px;
             margin-bottom: 20px;
-
-        .tx-time {        }
-
-            color: #888;
-
-            font-size: 0.85em;        ::-webkit-scrollbar {
-
-        }            width: 10px;
-
         }
 
-        .tx-details {
+        ::-webkit-scrollbar {
+            width: 10px;
+        }
 
-            color: #bbb;        ::-webkit-scrollbar-track {
-
-            font-size: 0.95em;            background: #0a0a0a;
-
-            line-height: 1.6;        }
-
+        ::-webkit-scrollbar-track {
+            background: #0a0a0a;
         }
 
         ::-webkit-scrollbar-thumb {
-
-        .tx-amount {            background: #e63946;
-
-            color: #00ff88;            border-radius: 5px;
-
-            font-weight: bold;        }
-
+            background: #e63946;
+            border-radius: 5px;
         }
 
         ::-webkit-scrollbar-thumb:hover {
-
-        .loading {            background: #d4a574;
-
-            text-align: center;        }
-
-            padding: 40px;    </style>
-
-            color: #888;</head>
-
-        }<body>
-
-    <header>
-
-        .loading::after {        <h1>⛓️ BlackBook L1</h1>
-
-            content: '...';        <p class="subtitle">Live Blockchain Ledger - Real-Time Transaction Feed</p>
-
-            animation: loading 1.5s infinite;    </header>
-
+            background: #d4a574;
         }
+    </style>
+</head>
+<body>
+    <header>
+        <h1>⛓️ BlackBook L1</h1>
+        <p class="subtitle">Live Blockchain Ledger - Real-Time Transaction Feed</p>
+    </header>
 
     <div class="container">
-
-        @keyframes loading {        <!-- Stats Section -->
-
-            0%, 20% { content: '.'; }        <div class="stats-grid">
-
-            40% { content: '..'; }            <div class="stat-card">
-
-            60%, 100% { content: '...'; }                <span class="stat-value" id="totalTransactions">0</span>
-
-        }                <span class="stat-label">Total Transactions</span>
-
-    </style>            </div>
-
-</head>            <div class="stat-card">
-
-<body>                <span class="stat-value" id="totalBets">0</span>
-
-    <div class="container">                <span class="stat-label">Total Bets</span>
-
-        <div class="header">            </div>
-
-            <h1>⛓️ BlackBook Blockchain Ledger</h1>            <div class="stat-card">
-
-            <p class="subtitle">Real-time transaction monitoring</p>                <span class="stat-value" id="totalVolume">0 BB</span>
-
-            <div class="live-indicator">                <span class="stat-label">Total Volume</span>
-
-                <span class="dot"></span>            </div>
-
-                <span>LIVE</span>            <div class="stat-card">
-
-            </div>                <span class="stat-value" id="activeAccounts">0</span>
-
-        </div>                <span class="stat-label">Active Accounts</span>
-
+        <!-- Stats Section -->
+        <div class="stats-grid">
+            <div class="stat-card">
+                <span class="stat-value" id="totalTransactions">0</span>
+                <span class="stat-label">Total Transactions</span>
             </div>
-
-        <div class="stats-grid" id="stats">        </div>
-
             <div class="stat-card">
-
-                <div class="label">Total Transactions</div>        <!-- Live Feed Section -->
-
-                <div class="value" id="totalTx">-</div>        <div class="feed-header">
-
-            </div>            <h2>
-
-            <div class="stat-card">                <span class="live-indicator"></span>
-
-                <div class="label">Total Bets</div>                Live Transaction Feed
-
-                <div class="value" id="totalBets">-</div>            </h2>
-
-            </div>        </div>
-
+                <span class="stat-value" id="totalBets">0</span>
+                <span class="stat-label">Total Bets</span>
+            </div>
             <div class="stat-card">
+                <span class="stat-value" id="totalVolume">0 BB</span>
+                <span class="stat-label">Total Volume</span>
+            </div>
+            <div class="stat-card">
+                <span class="stat-value" id="activeAccounts">0</span>
+                <span class="stat-label">Active Accounts</span>
+            </div>
+        </div>
 
-                <div class="label">Total Volume</div>        <div class="transaction-feed" id="transactionFeed">
+        <!-- Live Feed Section -->
+        <div class="feed-header">
+            <h2>
+                <span class="live-indicator"></span>
+                Live Transaction Feed
+            </h2>
+        </div>
 
-                <div class="value" id="totalVolume">-</div>            <div class="loading">📡 Connecting to blockchain...</div>
+        <div class="transaction-feed" id="transactionFeed">
+            <div class="loading">📡 Connecting to blockchain...</div>
+        </div>
+    </div>
 
-            </div>        </div>
+    <script>
+        // API Base URL - automatically uses current server
+        const API_URL = window.location.origin;
 
-            <div class="stat-card">    </div>
-
-                <div class="label">Active Accounts</div>
-
-                <div class="value" id="activeAccounts">-</div>    <script>
-
-            </div>        // API Base URL - automatically uses current server
-
-        </div>        const API_URL = window.location.origin;
-
-
-
-        <div class="feed-container">        // Update stats
-
-            <div class="feed-header">        async function updateStats() {
-
-                <h2>📊 Transaction Feed</h2>            try {
-
-                <span class="tx-time" id="lastUpdate">Loading...</span>                const response = await fetch(`${API_URL}/ledger/stats`);
-
-            </div>                const stats = await response.json();
-
-            <div id="transactionFeed">                
-
-                <div class="loading">Loading transactions</div>                document.getElementById('totalTransactions').textContent = stats.total_transactions || 0;
-
-            </div>                document.getElementById('totalBets').textContent = stats.total_bets || 0;
-
-        </div>                document.getElementById('totalVolume').textContent = `${(stats.total_volume || 0).toFixed(2)} BB`;
-
-    </div>                document.getElementById('activeAccounts').textContent = stats.total_accounts || 0;
-
+        // Update stats
+        async function updateStats() {
+            try {
+                const response = await fetch(`${API_URL}/ledger/stats`);
+                const stats = await response.json();
+                
+                document.getElementById('totalTransactions').textContent = stats.total_transactions || 0;
+                document.getElementById('totalBets').textContent = stats.total_bets || 0;
+                document.getElementById('totalVolume').textContent = `${(stats.total_volume || 0).toFixed(2)} BB`;
+                document.getElementById('activeAccounts').textContent = stats.total_accounts || 0;
             } catch (error) {
-
-    <script>                console.error('Failed to fetch stats:', error);
-
-        const API_BASE = window.location.origin;            }
-
+                console.error('Failed to fetch stats:', error);
+            }
         }
 
-        async function fetchStats() {
+        // Format time ago
+        function timeAgo(timestamp) {
+            const seconds = Math.floor(Date.now() / 1000 - timestamp);
+            
+            if (seconds < 60) return `${seconds}s ago`;
+            if (seconds < 3600) return `${Math.floor(seconds / 60)}m ago`;
+            if (seconds < 86400) return `${Math.floor(seconds / 3600)}h ago`;
+            return `${Math.floor(seconds / 86400)}d ago`;
+        }
 
-            try {        // Format time ago
-
-                const response = await fetch(`${API_BASE}/ledger/stats`);        function timeAgo(timestamp) {
-
-                const data = await response.json();            const seconds = Math.floor(Date.now() / 1000 - timestamp);
-
-                            
-
-                document.getElementById('totalTx').textContent = data.total_transactions || 0;            if (seconds < 60) return `${seconds}s ago`;
-
-                document.getElementById('totalBets').textContent = data.total_bets || 0;            if (seconds < 3600) return `${Math.floor(seconds / 60)}m ago`;
-
-                document.getElementById('totalVolume').textContent = `${data.total_volume?.toFixed(2) || 0} BB`;            if (seconds < 86400) return `${Math.floor(seconds / 3600)}h ago`;
-
-                document.getElementById('activeAccounts').textContent = data.active_accounts || 0;            return `${Math.floor(seconds / 86400)}d ago`;
-
-            } catch (error) {        }
-
-                console.error('Error fetching stats:', error);
-
-            }        // Render a transaction
-
-        }        function renderTransaction(tx) {
-
+        // Render a transaction
+        function renderTransaction(tx) {
             const isBet = tx.type === 'BET' || tx.type === 'bet';
+            const typeClass = isBet ? 'bet' : 'transfer';
+            const typeLabel = isBet ? 'BET' : tx.type.toUpperCase();
 
-        async function fetchTransactions() {            const typeClass = isBet ? 'bet' : 'transfer';
+            let details = '';
+            if (isBet) {
+                details = `
+                    <strong>${tx.from || 'Unknown'}</strong> bet 
+                    <span class="transaction-amount">${tx.amount.toFixed(2)} BB</span> 
+                    on <strong>${tx.prediction || tx.to || 'Unknown Market'}</strong>
+                `;
+            } else if (tx.type === 'TRANSFER' || tx.type === 'transfer') {
+                details = `
+                    <strong>${tx.from}</strong> → <strong>${tx.to}</strong>
+                    <span class="transaction-amount">${tx.amount.toFixed(2)} BB</span>
+                `;
+            } else if (tx.type === 'DEPOSIT' || tx.type === 'deposit') {
+                details = `
+                    <strong>${tx.to}</strong> deposited 
+                    <span class="transaction-amount">${tx.amount.toFixed(2)} BB</span>
+                `;
+            } else {
+                details = `
+                    <strong>${tx.from || 'System'}</strong> → <strong>${tx.to}</strong>
+                    <span class="transaction-amount">${tx.amount.toFixed(2)} BB</span>
+                `;
+            }
 
-            try {            const typeLabel = isBet ? 'BET' : tx.type.toUpperCase();
+            return `
+                <div class="transaction-item ${typeClass}">
+                    <div class="transaction-header">
+                        <span class="transaction-type ${typeClass}">${typeLabel}</span>
+                        <span class="transaction-time">${timeAgo(tx.timestamp)}</span>
+                    </div>
+                    <div class="transaction-details">
+                        ${details}
+                    </div>
+                </div>
+            `;
+        }
 
-                const response = await fetch(`${API_BASE}/transactions/recent?limit=50`);
-
-                const transactions = await response.json();            let details = '';
-
-                            if (isBet) {
-
-                const feed = document.getElementById('transactionFeed');                details = `
-
-                                    <strong>${tx.from || 'Unknown'}</strong> bet 
-
-                if (transactions.length === 0) {                    <span class="transaction-amount">${tx.amount.toFixed(2)} BB</span> 
-
-                    feed.innerHTML = '<div class="loading">No transactions yet</div>';                    on <strong>${tx.prediction || tx.to || 'Unknown Market'}</strong>
-
-                    return;                `;
-
-                }            } else if (tx.type === 'TRANSFER' || tx.type === 'transfer') {
-
-                                details = `
-
-                feed.innerHTML = transactions.map(tx => {                    <strong>${tx.from}</strong> → <strong>${tx.to}</strong>
-
-                    const type = tx.tx_type.toLowerCase();                    <span class="transaction-amount">${tx.amount.toFixed(2)} BB</span>
-
-                    const timeAgo = getTimeAgo(tx.timestamp);                `;
-
-                                } else if (tx.type === 'DEPOSIT' || tx.type === 'deposit') {
-
-                    let details = '';                details = `
-
-                    if (type === 'bet') {                    <strong>${tx.to}</strong> deposited 
-
-                        details = `<strong>${tx.from}</strong> placed a bet of <span class="tx-amount">${tx.amount} BB</span>`;                    <span class="transaction-amount">${tx.amount.toFixed(2)} BB</span>
-
-                    } else if (type === 'transfer') {                `;
-
-                        details = `<strong>${tx.from}</strong> → <strong>${tx.to}</strong> | <span class="tx-amount">${tx.amount} BB</span>`;            } else {
-
-                    } else if (type === 'deposit') {                details = `
-
-                        details = `<strong>${tx.to}</strong> deposited <span class="tx-amount">${tx.amount} BB</span>`;                    <strong>${tx.from || 'System'}</strong> → <strong>${tx.to}</strong>
-
-                    }                    <span class="transaction-amount">${tx.amount.toFixed(2)} BB</span>
-
-                                    `;
-
-                    return `            }
-
-                        <div class="transaction ${type}">
-
-                            <div class="tx-header">            return `
-
-                                <span class="tx-type ${type}">${type}</span>                <div class="transaction-item ${typeClass}">
-
-                                <span class="tx-time">${timeAgo}</span>                    <div class="transaction-header">
-
-                            </div>                        <span class="transaction-type ${typeClass}">${typeLabel}</span>
-
-                            <div class="tx-details">${details}</div>                        <span class="transaction-time">${timeAgo(tx.timestamp)}</span>
-
-                        </div>                    </div>
-
-                    `;                    <div class="transaction-details">
-
-                }).join('');                        ${details}
-
-                                    </div>
-
-                document.getElementById('lastUpdate').textContent = `Updated ${new Date().toLocaleTimeString()}`;                </div>
-
-            } catch (error) {            `;
-
-                console.error('Error fetching transactions:', error);        }
-
-                document.getElementById('transactionFeed').innerHTML = 
-
-                    '<div class="loading">Error loading transactions. Retrying...</div>';        // Load recent transactions
-
-            }        async function loadTransactions() {
-
-        }            try {
-
+        // Load recent transactions
+        async function loadTransactions() {
+            try {
                 const response = await fetch(`${API_URL}/transactions/recent?limit=50`);
-
-        function getTimeAgo(timestamp) {                const transactions = await response.json();
-
-            const seconds = Math.floor((Date.now() - timestamp) / 1000);                
-
-                            const feed = document.getElementById('transactionFeed');
-
-            if (seconds < 60) return `${seconds}s ago`;                
-
-            if (seconds < 3600) return `${Math.floor(seconds / 60)}m ago`;                if (transactions.length === 0) {
-
-            if (seconds < 86400) return `${Math.floor(seconds / 3600)}h ago`;                    feed.innerHTML = '<div class="loading">No transactions yet. Place a bet to see activity!</div>';
-
-            return `${Math.floor(seconds / 86400)}d ago`;                    return;
-
-        }                }
-
+                const transactions = await response.json();
                 
-
-        // Initial load                // Sort by timestamp (newest first)
-
-        fetchStats();                transactions.sort((a, b) => b.timestamp - a.timestamp);
-
-        fetchTransactions();                
-
+                const feed = document.getElementById('transactionFeed');
+                
+                if (transactions.length === 0) {
+                    feed.innerHTML = '<div class="loading">No transactions yet. Place a bet to see activity!</div>';
+                    return;
+                }
+                
+                // Sort by timestamp (newest first)
+                transactions.sort((a, b) => b.timestamp - a.timestamp);
+                
                 feed.innerHTML = transactions.map(renderTransaction).join('');
+            } catch (error) {
+                console.error('Failed to fetch transactions:', error);
+                document.getElementById('transactionFeed').innerHTML = 
+                    '<div class="error">⚠️ Failed to load transactions. Is the blockchain server running?</div>';
+            }
+        }
 
-        // Auto-refresh every 2 seconds            } catch (error) {
-
-        setInterval(() => {                console.error('Failed to fetch transactions:', error);
-
-            fetchStats();                document.getElementById('transactionFeed').innerHTML = 
-
-            fetchTransactions();                    '<div class="error">⚠️ Failed to load transactions. Is the blockchain server running?</div>';
-
-        }, 2000);            }
-
-    </script>        }
-
-</body>
-
-</html>        // Initial load
-
+        // Initial load
         updateStats();
         loadTransactions();
 
