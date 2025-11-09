@@ -1,7 +1,7 @@
 use axum::{
     extract::{Path, State},
     http::StatusCode,
-    response::Json,
+    response::{Json, Html},
     routing::{get, post},
     Router,
 };
@@ -432,6 +432,9 @@ async fn main() {
     let state = Arc::new(Mutex::new(AppState::new()));
 
     let app = Router::new()
+        // Root - Live Ledger Dashboard
+        .route("/", get(serve_live_ledger))
+        
         // Ledger endpoints
         .route("/accounts", get(get_all_accounts))
         .route("/balance/:address", get(get_balance))
@@ -439,7 +442,9 @@ async fn main() {
         .route("/transfer", post(transfer_funds))
         .route("/transactions/:address", get(get_user_transactions))
         .route("/transactions", get(get_all_transactions))
+        .route("/transactions/recent", get(get_recent_transactions))
         .route("/ledger/stats", get(get_ledger_stats))
+        .route("/stats", get(get_stats))
         
         // Admin operations
         .route("/admin/mint", post(admin_mint_tokens))
@@ -573,6 +578,12 @@ async fn main() {
 }
 
 // Handler functions
+
+// Serve the live ledger dashboard at root
+async fn serve_live_ledger() -> Html<&'static str> {
+    Html(include_str!("../index.html"))
+}
+
 async fn health_check() -> Json<Value> {
     Json(json!({
         "status": "healthy",
@@ -719,6 +730,76 @@ async fn get_all_transactions(
     Json(json!({
         "transactions": transactions,
         "count": transactions.len()
+    }))
+}
+
+// NEW: Get recent transactions with limit
+#[derive(Deserialize)]
+struct TransactionsQuery {
+    #[serde(default = "default_limit")]
+    limit: usize,
+}
+
+fn default_limit() -> usize {
+    50
+}
+
+async fn get_recent_transactions(
+    State(state): State<SharedState>,
+    axum::extract::Query(params): axum::extract::Query<TransactionsQuery>
+) -> Json<Value> {
+    let app_state = state.lock().unwrap();
+    let mut transactions = app_state.ledger.get_all_transactions();
+    
+    // Sort by timestamp descending (most recent first)
+    transactions.sort_by(|a, b| b.timestamp.cmp(&a.timestamp));
+    
+    // Take only the requested limit
+    let limited: Vec<_> = transactions.into_iter().take(params.limit).collect();
+    
+    Json(json!({
+        "transactions": limited,
+        "count": limited.len(),
+        "limit": params.limit
+    }))
+}
+
+// NEW: Get comprehensive stats for public display
+async fn get_stats(
+    State(state): State<SharedState>
+) -> Json<Value> {
+    let app_state = state.lock().unwrap();
+    
+    // Get all transactions
+    let transactions = app_state.ledger.get_all_transactions();
+    
+    // Get all markets
+    let markets = app_state.markets.clone();
+    let active_markets = markets.values().filter(|m| !m.is_resolved).count();
+    
+    // Calculate total volume from transactions
+    let total_volume: f64 = transactions.iter().map(|tx| tx.amount).sum();
+    
+    // Count unique accounts that have transacted
+    let mut unique_accounts = std::collections::HashSet::new();
+    for tx in &transactions {
+        unique_accounts.insert(tx.from.clone());
+        unique_accounts.insert(tx.to.clone());
+    }
+    
+    // Count bet transactions
+    let total_bets = transactions.iter().filter(|tx| tx.tx_type == "bet").count();
+    
+    Json(json!({
+        "total_transactions": transactions.len(),
+        "total_volume": total_volume,
+        "total_bets": total_bets,
+        "active_markets": active_markets,
+        "unique_accounts": unique_accounts.len(),
+        "timestamp": std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs()
     }))
 }
 
