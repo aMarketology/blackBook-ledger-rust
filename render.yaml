@@ -1,0 +1,15 @@
+services:
+  - type: web
+    name: blackbook-blockchain
+    runtime: docker
+    repo: https://github.com/aMarketology/blackBook-ledger-rust
+    branch: master
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+    envVars:
+      - key: PORT
+        value: 10000
+      - key: RUST_LOG
+        value: info
+    healthCheckPath: /health
+    autoDeploy: true
