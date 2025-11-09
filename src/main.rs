@@ -1,7 +1,7 @@
 use axum::{
     extract::{Path, State},
     http::StatusCode,
-    response::{Json, Html},
+    response::Json,
     routing::{get, post},
     Router,
 };
@@ -432,8 +432,8 @@ async fn main() {
     let state = Arc::new(Mutex::new(AppState::new()));
 
     let app = Router::new()
-        // Root - Live Ledger Dashboard
-        .route("/", get(serve_live_ledger))
+        // Root - API Info
+        .route("/", get(api_info))
         
         // Ledger endpoints
         .route("/accounts", get(get_all_accounts))
@@ -585,9 +585,22 @@ async fn main() {
 
 // Handler functions
 
-// Serve the live ledger dashboard at root
-async fn serve_live_ledger() -> Html<&'static str> {
-    Html(include_str!("../index.html"))
+// API info at root
+async fn api_info() -> Json<Value> {
+    Json(json!({
+        "service": "BlackBook Prediction Market Blockchain",
+        "version": "1.0.0",
+        "network": "Layer 1 (L1)",
+        "token": "BlackBook (BB)",
+        "endpoints": {
+            "health": "/health",
+            "accounts": "/accounts",
+            "markets": "/markets",
+            "stats": "/stats",
+            "leaderboard": "/leaderboard"
+        },
+        "documentation": "https://github.com/aMarketology/blackBook-ledger-rust"
+    }))
 }
 
 async fn health_check() -> Json<Value> {
