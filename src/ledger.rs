@@ -76,10 +76,11 @@ impl Ledger {
         let mut accounts = HashMap::new();
         let mut balances = HashMap::new();
 
-        // Display names for the 8 accounts
+        // Display names for the 8 accounts + HOUSE account for casino
         let names = vec![
             "ALICE", "BOB", "CHARLIE", "DIANA", 
-            "ETHAN", "FIONA", "GEORGE", "HANNAH"
+            "ETHAN", "FIONA", "GEORGE", "HANNAH",
+            "HOUSE"  // Casino house account with large bankroll
         ];
 
         // Generate a dynamic L1_<UUID> address for each account
@@ -92,8 +93,9 @@ impl Ledger {
 
             accounts.insert(name.to_string(), address.clone());
 
-            // Initialize each address with 1000 BB
-            balances.insert(address, 1000.0);
+            // Initialize each address with 1000 BB (10,000 BB for HOUSE)
+            let initial_balance = if name == "HOUSE" { 10000.0 } else { 1000.0 };
+            balances.insert(address, initial_balance);
 
             println!("✅ Generated account: {} -> {}", name, accounts.get(name).unwrap());
         }
@@ -170,15 +172,26 @@ impl Ledger {
 
     /// Add tokens to an account (admin function for GOD MODE)
     pub fn add_tokens(&mut self, address_or_name: &str, amount: f64) -> Result<String, String> {
+        println!("🔍 [DEPOSIT DEBUG] Adding tokens:");
+        println!("   Address/Name: {}", address_or_name);
+        println!("   Amount: {} BB", amount);
+        
         if amount <= 0.0 {
+            println!("   ❌ FAILED: Amount must be positive");
             return Err("Amount must be positive".to_string());
         }
 
         let addr = self.resolve_address(address_or_name);
+        println!("   Resolved address: {}", addr);
+        
         let current_balance = *self.balances.get(&addr).unwrap_or(&0.0);
+        println!("   Current balance: {} BB", current_balance);
+        
         let new_balance = current_balance + amount;
-
         self.balances.insert(addr.clone(), new_balance);
+        
+        println!("   ✅ New balance: {} BB", new_balance);
+        println!("   ✅ Balance map now has {} entries", self.balances.len());
 
         // Record transaction (addresses used)
         let tx = Transaction {
@@ -217,15 +230,32 @@ impl Ledger {
 
     /// Transfer tokens between accounts (accepts names or addresses)
     pub fn transfer(&mut self, from_or_name: &str, to_or_name: &str, amount: f64) -> Result<String, String> {
+        println!("🔍 [TRANSFER DEBUG] Starting transfer:");
+        println!("   From: {}", from_or_name);
+        println!("   To: {}", to_or_name);
+        println!("   Amount: {} BB", amount);
+        
         if amount <= 0.0 {
+            println!("   ❌ FAILED: Amount must be positive");
             return Err("Amount must be positive".to_string());
         }
 
         let from_addr = self.resolve_address(from_or_name);
         let to_addr = self.resolve_address(to_or_name);
+        
+        println!("   Resolved from address: {}", from_addr);
+        println!("   Resolved to address: {}", to_addr);
 
         let from_balance = *self.balances.get(&from_addr).unwrap_or(&0.0);
+        println!("   Current balance of {}: {} BB", from_or_name, from_balance);
+        println!("   Balance lookup in HashMap: {:?}", self.balances.get(&from_addr));
+        
         if from_balance < amount {
+            println!("   ❌ FAILED: Insufficient balance");
+            println!("   📊 All balances in ledger:");
+            for (addr, bal) in self.balances.iter() {
+                println!("      {} = {} BB", addr, bal);
+            }
             return Err(format!(
                 "Insufficient balance: {} has {} BB but needs {}",
                 from_or_name, from_balance, amount
@@ -233,11 +263,15 @@ impl Ledger {
         }
 
         // Deduct from sender
-        self.balances.insert(from_addr.clone(), from_balance - amount);
+        let new_from_balance = from_balance - amount;
+        self.balances.insert(from_addr.clone(), new_from_balance);
+        println!("   ✅ Deducted {} BB from {}. New balance: {} BB", amount, from_or_name, new_from_balance);
 
         // Add to recipient
         let to_balance = *self.balances.get(&to_addr).unwrap_or(&0.0);
-        self.balances.insert(to_addr.clone(), to_balance + amount);
+        let new_to_balance = to_balance + amount;
+        self.balances.insert(to_addr.clone(), new_to_balance);
+        println!("   ✅ Added {} BB to {}. New balance: {} BB", amount, to_or_name, new_to_balance);
 
         // Record transaction
         let tx = Transaction {
@@ -263,6 +297,8 @@ impl Ledger {
             Some(recipe_id.clone()),
         );
         self.recipes.push(recipe);
+        
+        println!("   ✅ TRANSFER COMPLETE");
 
         Ok(format!(
             "Transferred {} BB from {} ({}) to {} ({})",

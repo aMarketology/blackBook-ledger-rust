@@ -1,7 +1,7 @@
 use axum::{
     extract::{Path, State},
-    http::StatusCode,
-    response::Json,
+    http::{StatusCode, HeaderMap},
+    response::{Json, Html},
     routing::{get, post},
     Router,
 };
@@ -15,8 +15,10 @@ mod ledger;
 mod hot_upgrades;
 mod markets;
 mod escrow;
+mod auth;
 use ledger::Ledger;
 use hot_upgrades::{ProxyState, AuthorizedAccount, AuthorityLevel};
+use auth::{UserRegistry, SupabaseConfig, User, SignupRequest, LoginRequest, AuthResponse};
 
 // Prediction market struct - now tracks bettors for leaderboard
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -177,7 +179,7 @@ impl AppState {
         println!("✅ BlackBook Prediction Market Blockchain Initialized");
         println!("📊 Real Blockchain Accounts (L1 Wallets):");
         
-        let account_names = vec!["ALICE", "BOB", "CHARLIE", "DIANA", "ETHAN", "FIONA", "GEORGE", "HANNAH"];
+        let account_names = vec!["ALICE", "BOB", "CHARLIE", "DIANA", "ETHAN", "FIONA", "GEORGE", "HANNAH", "HOUSE"];
         
         for name in &account_names {
             let address = state.ledger.accounts.get(*name).map(|a| a.clone()).unwrap_or_default();
@@ -364,6 +366,26 @@ struct BetRequest {
     amount: f64,
 }
 
+// General Wager Request - for casino games, blackjack, peer-to-peer bets
+#[derive(Debug, Deserialize)]
+struct WagerRequest {
+    from: String,              // Player placing the wager
+    to: Option<String>,        // Optional opponent (None = house/casino)
+    amount: f64,               // Wager amount in BB
+    game_type: String,         // "blackjack", "poker", "roulette", "dice", "custom"
+    game_id: Option<String>,   // Optional game session ID
+    description: String,       // Description of the wager
+}
+
+// Wager Settlement Request - for resolving casino game outcomes
+#[derive(Debug, Deserialize)]
+struct SettleWagerRequest {
+    transaction_id: String,    // Original wager transaction ID
+    winner: String,            // Winner account name
+    payout_amount: f64,        // Amount to pay out
+    game_result: String,       // Game outcome description
+}
+
 // Response for leaderboard
 #[derive(Serialize)]
 struct LeaderboardEntry {
@@ -446,6 +468,14 @@ async fn main() {
         .route("/ledger/stats", get(get_ledger_stats))
         .route("/stats", get(get_stats))
         
+        // Wallet Connection endpoints (for frontend)
+        .route("/wallet/connect/:account_name", get(connect_wallet))
+        .route("/wallet/test-accounts", get(get_test_accounts))
+        .route("/wallet/account-info/:account_name", get(get_account_info))
+        
+        // Debug endpoint - list all balances
+        .route("/debug/balances", get(debug_all_balances))
+        
         // Admin operations
         .route("/admin/mint", post(admin_mint_tokens))
         .route("/admin/set-balance", post(admin_set_balance))
@@ -467,6 +497,11 @@ async fn main() {
         // Betting endpoints
         .route("/bet", post(place_bet))
         .route("/resolve/:market_id/:winning_option", post(resolve_market))
+        
+        // Casino & General Wager endpoints (for blackjack, poker, etc.)
+        .route("/wager", post(place_wager))
+        .route("/wager/settle", post(settle_wager))
+        .route("/wager/history/:account", get(get_wager_history))
         
         // Live crypto price betting endpoints (1-min and 15-min)
         .route("/live-bet", post(place_live_price_bet))
@@ -504,17 +539,23 @@ async fn main() {
         );
 
     // Bind to 0.0.0.0 for deployment (accepts external connections)
-    // Use environment variable PORT or default to 3000
+    // Use environment variable PORT or default to 8080
     let port = std::env::var("PORT")
-        .unwrap_or_else(|_| "3000".to_string())
+        .unwrap_or_else(|_| "8080".to_string())
         .parse::<u16>()
-        .unwrap_or(3000);
+        .unwrap_or(8080);
     let addr = SocketAddr::from(([0, 0, 0, 0], port));
     println!("🚀 BlackBook Prediction Market starting on http://0.0.0.0:{}", port);
     println!("");
-    println!("📚 HTTP REST API Endpoints (Port 3000):");
-    println!("   GET  /health - Health check");
-    println!("   GET  /balance/:address - Get account balance");
+    println!("📚 HTTP REST API Endpoints (Port {}):", port);
+    println!("   🔌 Wallet Connection:");
+    println!("      GET  /wallet/test-accounts - Get all 8 test accounts");
+    println!("      GET  /wallet/connect/:account_name - Connect wallet (ALICE, BOB, etc.)");
+    println!("      GET  /wallet/account-info/:account_name - Get detailed account info");
+    println!("   📊 Account Management:");
+    println!("      GET  /health - Health check");
+    println!("      GET  /accounts - Get all accounts");
+    println!("      GET  /balance/:address - Get account balance");
     println!("   POST /deposit - Deposit funds");
     println!("   POST /transfer - Transfer between accounts");
     println!("   POST /admin/mint - Mint tokens (admin)");
@@ -644,6 +685,192 @@ async fn get_all_accounts(
         "total_accounts": accounts.len(),
         "total_supply": accounts.iter().map(|a| a["balance"].as_f64().unwrap_or(0.0)).sum::<f64>()
     }))
+}
+
+// Debug endpoint - list all balances in the HashMap
+async fn debug_all_balances(
+    State(state): State<SharedState>
+) -> Json<Value> {
+    let app_state = state.lock().unwrap();
+    
+    println!("🔍 [DEBUG] Listing all balances in ledger:");
+    println!("   Total entries: {}", app_state.ledger.balances.len());
+    
+    let mut balances_list = Vec::new();
+    for (address, balance) in app_state.ledger.balances.iter() {
+        println!("   {} = {} BB", address, balance);
+        balances_list.push(json!({
+            "address": address,
+            "balance": balance
+        }));
+    }
+    
+    Json(json!({
+        "success": true,
+        "total_entries": app_state.ledger.balances.len(),
+        "balances": balances_list
+    }))
+}
+
+// Wallet Connection Endpoints for Frontend
+
+/// Connect wallet - Returns account details for frontend wallet connection
+async fn connect_wallet(
+    State(state): State<SharedState>,
+    Path(account_name): Path<String>
+) -> Result<Json<Value>, StatusCode> {
+    let mut app_state = state.lock().unwrap();
+    
+    // Normalize account name to uppercase
+    let account_name_upper = account_name.to_uppercase();
+    
+    // Check if account exists
+    if let Some(address) = app_state.ledger.accounts.get(&account_name_upper as &str) {
+        let balance = app_state.ledger.get_balance(&account_name_upper);
+        let transactions = app_state.ledger.get_account_transactions(&account_name_upper);
+        
+        // Get user's bets across all markets
+        let mut user_bets = Vec::new();
+        for (market_id, market) in &app_state.markets {
+            if market.unique_bettors.contains(&account_name_upper) {
+                user_bets.push(json!({
+                    "market_id": market_id,
+                    "market_title": market.title,
+                    "category": market.category,
+                }));
+            }
+        }
+        
+        // Log wallet connection to blockchain activity feed
+        app_state.log_blockchain_activity(
+            "🔌",
+            "WALLET_CONNECTED",
+            &format!("{} connected from frontend | Balance: {} BB (${:.2} USD) | Address: {}", 
+                account_name_upper, balance, balance * 0.01, address)
+        );
+        
+        Ok(Json(json!({
+            "success": true,
+            "connected": true,
+            "account": {
+                "name": account_name_upper,
+                "address": address,
+                "balance": balance,
+                "balance_usd": balance * 0.01, // BB token = $0.01
+                "token": "BB",
+                "network": "BlackBook L1"
+            },
+            "stats": {
+                "transaction_count": transactions.len(),
+                "markets_participated": user_bets.len(),
+            },
+            "recent_transactions": transactions.iter().rev().take(5).collect::<Vec<_>>(),
+            "active_bets": user_bets
+        })))
+    } else {
+        Ok(Json(json!({
+            "success": false,
+            "connected": false,
+            "error": format!("Account '{}' not found. Available accounts: ALICE, BOB, CHARLIE, DIANA, ETHAN, FIONA, GEORGE, HANNAH", account_name_upper)
+        })))
+    }
+}
+
+/// Get all test accounts for wallet selection (God Mode)
+async fn get_test_accounts(
+    State(state): State<SharedState>
+) -> Json<Value> {
+    let app_state = state.lock().unwrap();
+    
+    let test_accounts = vec!["ALICE", "BOB", "CHARLIE", "DIANA", "ETHAN", "FIONA", "GEORGE", "HANNAH"];
+    
+    let accounts: Vec<Value> = test_accounts.iter().map(|name| {
+        let address = app_state.ledger.accounts.get(*name).map(|a| a.clone()).unwrap_or_default();
+        let balance = app_state.ledger.get_balance(name);
+        let transactions = app_state.ledger.get_account_transactions(name);
+        
+        json!({
+            "name": name,
+            "address": address,
+            "balance": balance,
+            "balance_usd": balance * 0.01,
+            "token": "BB",
+            "transaction_count": transactions.len(),
+            "avatar": format!("https://api.dicebear.com/7.x/avataaars/svg?seed={}", name.to_lowercase())
+        })
+    }).collect();
+    
+    Json(json!({
+        "success": true,
+        "network": "BlackBook L1",
+        "rpc_url": format!("http://0.0.0.0:{}", std::env::var("PORT").unwrap_or_else(|_| "8080".to_string())),
+        "test_accounts": accounts,
+        "total_accounts": accounts.len(),
+        "note": "These are pre-funded test accounts for development. Connect any account to start trading."
+    }))
+}
+
+/// Get detailed account info
+async fn get_account_info(
+    State(state): State<SharedState>,
+    Path(account_name): Path<String>
+) -> Result<Json<Value>, StatusCode> {
+    let mut app_state = state.lock().unwrap();
+    
+    let account_name_upper = account_name.to_uppercase();
+    
+    if let Some(address) = app_state.ledger.accounts.get(&account_name_upper as &str) {
+        let balance = app_state.ledger.get_balance(&account_name_upper);
+        let transactions = app_state.ledger.get_all_transactions()
+            .into_iter()
+            .filter(|tx| tx.from == account_name_upper || tx.to == account_name_upper)
+            .collect::<Vec<_>>();
+        
+        // Calculate stats
+        let total_sent = transactions.iter()
+            .filter(|tx| tx.from == account_name_upper)
+            .map(|tx| tx.amount)
+            .sum::<f64>();
+        
+        let total_received = transactions.iter()
+            .filter(|tx| tx.to == account_name_upper)
+            .map(|tx| tx.amount)
+            .sum::<f64>();
+        
+        let bets_count = transactions.iter()
+            .filter(|tx| tx.tx_type == "bet" && tx.from == account_name_upper)
+            .count();
+        
+        // Log account info request to blockchain activity feed
+        app_state.log_blockchain_activity(
+            "📊",
+            "ACCOUNT_INFO_VIEWED",
+            &format!("{} | Transactions: {} | Bets: {} | Balance: {} BB", 
+                account_name_upper, transactions.len(), bets_count, balance)
+        );
+        
+        Ok(Json(json!({
+            "success": true,
+            "account": {
+                "name": account_name_upper,
+                "address": address,
+                "balance": balance,
+                "balance_usd": balance * 0.01,
+                "token": "BB",
+                "network": "BlackBook L1"
+            },
+            "statistics": {
+                "total_transactions": transactions.len(),
+                "total_sent": total_sent,
+                "total_received": total_received,
+                "bets_placed": bets_count,
+                "net_flow": total_received - total_sent
+            },
+            "recent_transactions": transactions.iter().rev().take(10).collect::<Vec<_>>()
+        })))
+    } else {
+        Err(StatusCode::NOT_FOUND)
+    }
 }
 
 async fn get_balance(
@@ -1069,6 +1296,158 @@ async fn place_bet(
             })))
         }
     }
+}
+
+// ===== CASINO & GENERAL WAGER ENDPOINTS =====
+
+/// Place a general wager (for casino games, blackjack, poker, peer-to-peer bets)
+async fn place_wager(
+    State(state): State<SharedState>,
+    Json(payload): Json<WagerRequest>
+) -> Result<Json<Value>, StatusCode> {
+    println!("🎰 [PLACE_WAGER] Received wager request:");
+    println!("   └─ From: {}", payload.from);
+    println!("   └─ To: {:?}", payload.to);
+    println!("   └─ Amount: {} BB", payload.amount);
+    println!("   └─ Game: {}", payload.game_type);
+    
+    let mut app_state = state.lock().unwrap();
+    
+    // Validate amount
+    if payload.amount <= 0.0 {
+        return Ok(Json(json!({
+            "success": false,
+            "error": "Wager amount must be positive"
+        })));
+    }
+    
+    // Check if player has sufficient balance
+    let player_balance = app_state.ledger.get_balance(&payload.from);
+    if player_balance < payload.amount {
+        return Ok(Json(json!({
+            "success": false,
+            "error": format!("Insufficient balance: {} has {} BB but needs {} BB", 
+                payload.from, player_balance, payload.amount)
+        })));
+    }
+    
+    // Determine the recipient (opponent or house)
+    let recipient = payload.to.clone().unwrap_or_else(|| "HOUSE".to_string());
+    
+    // Create wager transaction using transfer
+    match app_state.ledger.transfer(&payload.from, &recipient, payload.amount) {
+        Ok(tx_id) => {
+            let new_balance = app_state.ledger.get_balance(&payload.from);
+            let game_id = payload.game_id.clone().unwrap_or_else(|| uuid::Uuid::new_v4().simple().to_string());
+            
+            // Log to blockchain activity feed
+            app_state.log_blockchain_activity(
+                "🎰",
+                "WAGER_PLACED",
+                &format!("{} wagered {} BB on {} | Game ID: {} | To: {} | Balance: {} BB", 
+                    payload.from, payload.amount, payload.game_type, game_id, recipient, new_balance)
+            );
+            
+            Ok(Json(json!({
+                "success": true,
+                "transaction_id": tx_id,
+                "game_id": game_id,
+                "wager": {
+                    "from": payload.from,
+                    "to": recipient,
+                    "amount": payload.amount,
+                    "game_type": payload.game_type,
+                    "description": payload.description
+                },
+                "new_balance": new_balance,
+                "message": format!("Wager placed: {} BB on {}", payload.amount, payload.game_type)
+            })))
+        },
+        Err(error) => {
+            Ok(Json(json!({
+                "success": false,
+                "error": error
+            })))
+        }
+    }
+}
+
+/// Settle a wager (resolve casino game outcome)
+async fn settle_wager(
+    State(state): State<SharedState>,
+    Json(payload): Json<SettleWagerRequest>
+) -> Result<Json<Value>, StatusCode> {
+    println!("💰 [SETTLE_WAGER] Settling wager:");
+    println!("   └─ Transaction ID: {}", payload.transaction_id);
+    println!("   └─ Winner: {}", payload.winner);
+    println!("   └─ Payout: {} BB", payload.payout_amount);
+    
+    let mut app_state = state.lock().unwrap();
+    
+    // Transfer winnings from HOUSE to winner
+    match app_state.ledger.transfer("HOUSE", &payload.winner, payload.payout_amount) {
+        Ok(tx_id) => {
+            let winner_balance = app_state.ledger.get_balance(&payload.winner);
+            
+            // Log to blockchain activity feed
+            app_state.log_blockchain_activity(
+                "🏆",
+                "WAGER_SETTLED",
+                &format!("{} won {} BB | Result: {} | Balance: {} BB", 
+                    payload.winner, payload.payout_amount, payload.game_result, winner_balance)
+            );
+            
+            Ok(Json(json!({
+                "success": true,
+                "settlement_tx_id": tx_id,
+                "original_tx_id": payload.transaction_id,
+                "winner": payload.winner,
+                "payout": payload.payout_amount,
+                "new_balance": winner_balance,
+                "game_result": payload.game_result,
+                "message": format!("{} won {} BB!", payload.winner, payload.payout_amount)
+            })))
+        },
+        Err(error) => {
+            app_state.log_blockchain_activity(
+                "❌",
+                "WAGER_SETTLEMENT_FAILED",
+                &format!("Failed to settle wager for {} | Error: {}", payload.winner, error)
+            );
+            
+            Ok(Json(json!({
+                "success": false,
+                "error": error
+            })))
+        }
+    }
+}
+
+/// Get wager history for an account
+async fn get_wager_history(
+    State(state): State<SharedState>,
+    Path(account): Path<String>
+) -> Json<Value> {
+    let app_state = state.lock().unwrap();
+    
+    // Get all transactions for this account
+    let all_transactions = app_state.ledger.get_all_transactions();
+    
+    // Filter for wager-related transactions
+    let wager_transactions: Vec<_> = all_transactions
+        .into_iter()
+        .filter(|tx| {
+            (tx.from == account || tx.to == account) && 
+            (tx.to == "HOUSE" || tx.from == "HOUSE" || tx.tx_type == "transfer")
+        })
+        .collect();
+    
+    Json(json!({
+        "success": true,
+        "account": account,
+        "wager_count": wager_transactions.len(),
+        "wagers": wager_transactions
+    }))
 }
 
 async fn resolve_market(
