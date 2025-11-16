@@ -145,6 +145,15 @@ pub struct MarketActivity {
     pub timestamp: u64,
 }
 
+// Blockchain Activity Log Entry
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BlockchainActivity {
+    pub timestamp: String,
+    pub emoji: String,
+    pub action_type: String,
+    pub details: String,
+}
+
 // Application state - simple prediction market storage
 #[derive(Debug)]
 
@@ -155,6 +164,7 @@ pub struct AppState {
     // pub proxy_state: ProxyState,       // Hot upgrade system - TODO: fix integration
     pub ai_events: Vec<AiEvent>,       // AI-generated events for RSS feed
     pub market_activities: Vec<MarketActivity>,  // Track all prediction market activities
+    pub blockchain_activities: Vec<BlockchainActivity>,  // Real-time blockchain activity feed
 }
 
 impl AppState {
@@ -169,6 +179,7 @@ impl AppState {
             // proxy_state: ProxyState::new(authorized_accounts),
             ai_events: Vec::new(),
             market_activities: Vec::new(),
+            blockchain_activities: Vec::new(),
         };
 
         // The ledger now has 8 real accounts with L1_ wallet addresses
@@ -236,10 +247,23 @@ impl AppState {
         self.market_activities.push(activity);
     }
     
-    /// Log blockchain activity to terminal in real-time
-    pub fn log_blockchain_activity(&self, emoji: &str, action_type: &str, details: &str) {
-        let timestamp = chrono::Local::now().format("%H:%M:%S");
+    /// Log blockchain activity to terminal in real-time AND store in memory
+    pub fn log_blockchain_activity(&mut self, emoji: &str, action_type: &str, details: &str) {
+        let timestamp = chrono::Local::now().format("%H:%M:%S").to_string();
         println!("[{}] {} {} | {}", timestamp, emoji, action_type, details);
+        
+        // Store in memory (keep last 100 activities)
+        self.blockchain_activities.push(BlockchainActivity {
+            timestamp: timestamp.clone(),
+            emoji: emoji.to_string(),
+            action_type: action_type.to_string(),
+            details: details.to_string(),
+        });
+        
+        // Keep only last 100 activities to prevent memory bloat
+        if self.blockchain_activities.len() > 100 {
+            self.blockchain_activities.remove(0);
+        }
     }
     
     fn create_sample_markets(&mut self) {
@@ -457,6 +481,10 @@ async fn main() {
         // Root - API Info
         .route("/", get(api_info))
         
+        // Live Blockchain Activity Feed
+        .route("/ledger", get(get_blockchain_activity_feed))
+        .route("/ledger/json", get(get_blockchain_activity_json))
+        
         // Ledger endpoints
         .route("/accounts", get(get_all_accounts))
         .route("/balance/:address", get(get_balance))
@@ -653,6 +681,297 @@ async fn health_check() -> Json<Value> {
     }))
 }
 
+// Live Blockchain Activity Feed endpoint
+async fn get_blockchain_activity_feed(State(state): State<SharedState>) -> Html<String> {
+    let app_state = state.lock().unwrap();
+    
+    let mut html = String::from(r#"
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>BlackBook L1 - Live Blockchain Activity Feed</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: 'Courier New', monospace;
+            background: linear-gradient(135deg, #0f0f23 0%, #1a1a3e 100%);
+            color: #00ff41;
+            padding: 20px;
+            min-height: 100vh;
+        }
+        
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+        }
+        
+        .header {
+            text-align: center;
+            padding: 30px 20px;
+            background: rgba(0, 0, 0, 0.4);
+            border: 2px solid #00ff41;
+            border-radius: 10px;
+            margin-bottom: 30px;
+            box-shadow: 0 0 30px rgba(0, 255, 65, 0.3);
+        }
+        
+        .header h1 {
+            font-size: 28px;
+            margin-bottom: 10px;
+            text-shadow: 0 0 10px rgba(0, 255, 65, 0.8);
+            letter-spacing: 2px;
+        }
+        
+        .header .subtitle {
+            color: #00ccff;
+            font-size: 16px;
+            margin-top: 10px;
+        }
+        
+        .divider {
+            text-align: center;
+            color: #00ff41;
+            font-size: 14px;
+            margin: 20px 0;
+            letter-spacing: 1px;
+        }
+        
+        .activity-feed {
+            background: rgba(0, 0, 0, 0.6);
+            border: 2px solid #00ff41;
+            border-radius: 10px;
+            padding: 20px;
+            box-shadow: 0 0 30px rgba(0, 255, 65, 0.2);
+        }
+        
+        .activity-item {
+            padding: 15px;
+            margin-bottom: 10px;
+            background: rgba(0, 40, 20, 0.5);
+            border-left: 4px solid #00ff41;
+            border-radius: 5px;
+            font-size: 14px;
+            line-height: 1.6;
+            transition: all 0.3s ease;
+        }
+        
+        .activity-item:hover {
+            background: rgba(0, 60, 30, 0.7);
+            transform: translateX(5px);
+            box-shadow: 0 0 15px rgba(0, 255, 65, 0.4);
+        }
+        
+        .timestamp {
+            color: #888;
+            font-weight: bold;
+            margin-right: 10px;
+        }
+        
+        .emoji {
+            font-size: 20px;
+            margin-right: 8px;
+        }
+        
+        .action-type {
+            color: #00ccff;
+            font-weight: bold;
+            margin-right: 8px;
+        }
+        
+        .details {
+            color: #aaffaa;
+        }
+        
+        .stats-bar {
+            display: flex;
+            justify-content: space-around;
+            margin-bottom: 30px;
+            flex-wrap: wrap;
+        }
+        
+        .stat-box {
+            background: rgba(0, 0, 0, 0.5);
+            border: 2px solid #00ff41;
+            border-radius: 8px;
+            padding: 15px 25px;
+            text-align: center;
+            min-width: 200px;
+            margin: 10px;
+            box-shadow: 0 0 15px rgba(0, 255, 65, 0.2);
+        }
+        
+        .stat-label {
+            color: #888;
+            font-size: 12px;
+            margin-bottom: 5px;
+        }
+        
+        .stat-value {
+            color: #00ff41;
+            font-size: 24px;
+            font-weight: bold;
+            text-shadow: 0 0 10px rgba(0, 255, 65, 0.6);
+        }
+        
+        .refresh-notice {
+            text-align: center;
+            color: #00ccff;
+            font-size: 14px;
+            margin-top: 20px;
+            padding: 10px;
+            background: rgba(0, 100, 200, 0.2);
+            border-radius: 5px;
+        }
+        
+        .empty-state {
+            text-align: center;
+            padding: 60px 20px;
+            color: #888;
+            font-size: 16px;
+        }
+        
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.6; }
+        }
+        
+        .live-indicator {
+            display: inline-block;
+            width: 12px;
+            height: 12px;
+            background: #00ff41;
+            border-radius: 50%;
+            margin-right: 8px;
+            animation: pulse 2s infinite;
+            box-shadow: 0 0 10px rgba(0, 255, 65, 0.8);
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━</h1>
+            <h1><span class="live-indicator"></span>LIVE BLOCKCHAIN ACTIVITY FEED</h1>
+            <h1>━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━</h1>
+            <div class="subtitle">🔗 BlackBook Layer 1 Blockchain | Real-time Transaction Monitor</div>
+        </div>
+        
+        <div class="stats-bar">
+            <div class="stat-box">
+                <div class="stat-label">TOTAL ACTIVITIES</div>
+                <div class="stat-value">"#);
+    
+    html.push_str(&app_state.blockchain_activities.len().to_string());
+    html.push_str(r#"</div>
+            </div>
+            <div class="stat-box">
+                <div class="stat-label">ACTIVE MARKETS</div>
+                <div class="stat-value">"#);
+    
+    html.push_str(&app_state.markets.len().to_string());
+    html.push_str(r#"</div>
+            </div>
+            <div class="stat-box">
+                <div class="stat-label">LIVE ACCOUNTS</div>
+                <div class="stat-value">9</div>
+            </div>
+        </div>
+        
+        <div class="activity-feed">
+            <div class="divider">▼ RECENT BLOCKCHAIN ACTIVITY (Last 100) ▼</div>
+"#);
+    
+    // Display activities in reverse chronological order (newest first)
+    if app_state.blockchain_activities.is_empty() {
+        html.push_str(r#"
+            <div class="empty-state">
+                <p>⏳ No blockchain activity yet...</p>
+                <p style="margin-top: 10px; font-size: 14px;">Activities will appear here in real-time</p>
+            </div>
+"#);
+    } else {
+        for activity in app_state.blockchain_activities.iter().rev() {
+            html.push_str(&format!(
+                r#"
+            <div class="activity-item">
+                <span class="timestamp">[{}]</span>
+                <span class="emoji">{}</span>
+                <span class="action-type">{}</span>
+                <span class="details">{}</span>
+            </div>
+"#,
+                activity.timestamp,
+                activity.emoji,
+                activity.action_type,
+                activity.details
+            ));
+        }
+    }
+    
+    html.push_str(r#"
+        </div>
+        
+        <div class="refresh-notice">
+            🔄 Auto-refresh: Reload this page to see latest activity | API endpoint: GET /ledger/json
+        </div>
+    </div>
+</body>
+</html>
+    "#);
+    
+    Html(html)
+}
+
+// JSON API endpoint for blockchain activity feed (for other apps)
+async fn get_blockchain_activity_json(State(state): State<SharedState>) -> Json<Value> {
+    let app_state = state.lock().unwrap();
+    
+    // Get activities in reverse chronological order (newest first)
+    let activities: Vec<Value> = app_state.blockchain_activities
+        .iter()
+        .rev()
+        .map(|activity| json!({
+            "timestamp": activity.timestamp,
+            "emoji": activity.emoji,
+            "action_type": activity.action_type,
+            "details": activity.details
+        }))
+        .collect();
+    
+    Json(json!({
+        "success": true,
+        "blockchain": {
+            "network": "BlackBook L1",
+            "token": "BB",
+            "token_value_usd": 0.01
+        },
+        "stats": {
+            "total_activities": app_state.blockchain_activities.len(),
+            "active_markets": app_state.markets.len(),
+            "live_accounts": 9,
+            "live_bets_active": app_state.live_bets.iter().filter(|b| b.status == "ACTIVE").count()
+        },
+        "activities": activities,
+        "metadata": {
+            "max_stored": 100,
+            "returned_count": activities.len(),
+            "description": "Real-time blockchain activity feed showing all transactions, bets, and market activity",
+            "endpoints": {
+                "html_view": "/ledger",
+                "json_api": "/ledger/json"
+            }
+        },
+        "timestamp": chrono::Utc::now().to_rfc3339()
+    }))
+}
+
 // Get all accounts for GOD MODE
 // These are REAL blockchain wallets on the BlackBook ledger
 // Each account has a dynamically generated L1_<UUID> wallet address
@@ -724,8 +1043,9 @@ async fn connect_wallet(
     // Normalize account name to uppercase
     let account_name_upper = account_name.to_uppercase();
     
-    // Check if account exists
+    // Check if account exists and clone the data we need before mutable borrow
     if let Some(address) = app_state.ledger.accounts.get(&account_name_upper as &str) {
+        let address_clone = address.clone();
         let balance = app_state.ledger.get_balance(&account_name_upper);
         let transactions = app_state.ledger.get_account_transactions(&account_name_upper);
         
@@ -746,7 +1066,7 @@ async fn connect_wallet(
             "🔌",
             "WALLET_CONNECTED",
             &format!("{} connected from frontend | Balance: {} BB (${:.2} USD) | Address: {}", 
-                account_name_upper, balance, balance * 0.01, address)
+                account_name_upper, balance, balance * 0.01, address_clone)
         );
         
         Ok(Json(json!({
@@ -754,7 +1074,7 @@ async fn connect_wallet(
             "connected": true,
             "account": {
                 "name": account_name_upper,
-                "address": address,
+                "address": address_clone,
                 "balance": balance,
                 "balance_usd": balance * 0.01, // BB token = $0.01
                 "token": "BB",
@@ -820,6 +1140,7 @@ async fn get_account_info(
     let account_name_upper = account_name.to_uppercase();
     
     if let Some(address) = app_state.ledger.accounts.get(&account_name_upper as &str) {
+        let address_clone = address.clone();
         let balance = app_state.ledger.get_balance(&account_name_upper);
         let transactions = app_state.ledger.get_all_transactions()
             .into_iter()
@@ -853,7 +1174,7 @@ async fn get_account_info(
             "success": true,
             "account": {
                 "name": account_name_upper,
-                "address": address,
+                "address": address_clone,
                 "balance": balance,
                 "balance_usd": balance * 0.01,
                 "token": "BB",
@@ -1184,31 +1505,21 @@ async fn place_bet(
     State(state): State<SharedState>,
     Json(payload): Json<BetRequest>
 ) -> Result<Json<Value>, StatusCode> {
-    println!("🔍 [PLACE_BET DEBUG] Received bet request:");
-    println!("   └─ Market ID: {}", payload.market);
-    println!("   └─ Account: {}", payload.account);
-    println!("   └─ Amount: {}", payload.amount);
-    println!("   └─ Outcome: {}", payload.outcome);
+    // Log to blockchain activity feed immediately
+    let timestamp = chrono::Local::now().format("%H:%M:%S");
+    println!("[{}] 🎯 BET_REQUEST | {} wants to bet {} BB on market: {}", 
+        timestamp, payload.account, payload.amount, payload.market);
     
     // First, get the market info without borrowing mutably
     let (market_title, market_option, is_resolved, valid_option) = {
         let app_state = state.lock().unwrap();
         
-        // DEBUG: List all available markets
-        println!("🔍 [PLACE_BET DEBUG] Available markets in state:");
-        for (market_id, market) in app_state.markets.iter() {
-            println!("   ├─ Market ID: \"{}\" - Title: \"{}\"", market_id, market.title);
-        }
-        println!("   └─ Total markets: {}", app_state.markets.len());
-        
         let market = match app_state.markets.get(&payload.market) {
-            Some(m) => {
-                println!("✅ [PLACE_BET DEBUG] Market found: {}", m.title);
-                m
-            },
+            Some(m) => m,
             None => {
-                println!("❌ [PLACE_BET DEBUG] Market '{}' NOT FOUND in state!", payload.market);
-                println!("   └─ This is why we're returning 404");
+                let timestamp = chrono::Local::now().format("%H:%M:%S");
+                println!("[{}] ❌ BET_FAILED | Market '{}' not found for {}", 
+                    timestamp, payload.market, payload.account);
                 return Err(StatusCode::NOT_FOUND)
             }
         };
@@ -1252,12 +1563,12 @@ async fn place_bet(
                 let on_leaderboard = market.on_leaderboard;
                 let unique_bettors = market.unique_bettors.len();
                 
-                // Log to terminal
+                // Log to blockchain activity feed
                 app_state.log_blockchain_activity(
                     "🎲",
                     "BET_PLACED",
-                    &format!("{} bet {} BB on \"{}\" → {} | Balance: {} BB | Bettors: {}", 
-                        payload.account, payload.amount, market_title, market_option, user_balance, unique_bettors)
+                    &format!("{} bet {} BB on \"{}\" → {} | Market ID: {} | Balance: {} BB | Total Bettors: {}", 
+                        payload.account, payload.amount, market_title, market_option, payload.market, user_balance, unique_bettors)
                 );
                 
                 Ok(Json(json!({
@@ -1290,6 +1601,14 @@ async fn place_bet(
             }
         },
         Err(error) => {
+            // Log failed bet to blockchain activity feed
+            app_state.log_blockchain_activity(
+                "❌",
+                "BET_FAILED",
+                &format!("{} failed to bet {} BB on \"{}\" | Error: {}", 
+                    payload.account, payload.amount, market_title, error)
+            );
+            
             Ok(Json(json!({
                 "success": false,
                 "message": error
