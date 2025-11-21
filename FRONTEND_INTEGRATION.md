@@ -11,7 +11,7 @@ This guide shows how to connect your frontend to the BlackBook blockchain and al
 ### RPC Endpoint
 ```
 Local:      http://localhost:8080
-Production: https://blackbook.id
+
 ```
 
 ### Test Accounts (God Mode)
