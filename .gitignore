@@ -30,9 +30,6 @@ Thumbs.db
 *.so
 *.dylib
 
-# RSS Feeds (if sensitive)
-*.rss
-
 # Backup files
 *.bak
 *.backup

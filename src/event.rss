@@ -1,0 +1,53 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0" xmlns:atom="http://www.w3.org/2005/Atom">
+  <channel>
+    <title>BlackBook AI Prediction Events</title>
+    <description>AI-generated prediction market events from various sources</description>
+    <link>http://localhost:3000/ai/events/feed.rss</link>
+    <atom:link href="http://localhost:3000/ai/events/feed.rss" rel="self" type="application/rss+xml" />
+    <language>en-us</language>
+    <managingEditor>ai-agent@blackbook.market</managingEditor>
+    <webMaster>admin@blackbook.market</webMaster>
+    <lastBuildDate>Mon, 3 Nov 2025 01:32:51 +0000</lastBuildDate>
+    <category>Prediction Markets</category>
+    <generator>BlackBook AI Event Generator</generator>
+    <ttl>60</ttl>
+    
+    <item>
+      <title><![CDATA[✅ ACTIVE MARKET - Will the events described in 'Sending Crypto Globally...' occur as predicted?]]></title>
+      <description><![CDATA[Based on the article titled 'Sending Crypto Globally with Zelle ?? Yes | Object Wire', will the main predictions or events described come to fruition?]]></description>
+      <link>https://www.objectwire.org/zelle-payment-processor-goes-global-to-allow-crypto-stablecoins-for-international-transactions</link>
+      <guid isPermaLink="false">ai_event_94411c5981584a029f585b1ebd81aaf1</guid>
+      <pubDate>Mon, 3 Nov 2025 01:32:51 +0000</pubDate>
+      <category>tech</category>
+      <source url="https://www.objectwire.org/zelle-payment-processor-goes-global-to-allow-crypto-stablecoins-for-international-transactions"><![CDATA[www.objectwire.org]]></source>
+      <confidence>0.700</confidence>
+      <addedToLedger>true</addedToLedger>
+      <marketId>ai_market_3334f5ac6914414292d79a59d310df3b</marketId>
+      <marketUrl>http://localhost:3000/markets/ai_market_3334f5ac6914414292d79a59d310df3b</marketUrl>
+      <options>
+        <option><![CDATA[Yes, events will occur]]></option>
+        <option><![CDATA[No, events will not occur]]></option>
+        <option><![CDATA[Partially accurate]]></option>
+      </options>
+    </item>
+    <item>
+      <title><![CDATA[✅ ACTIVE MARKET - Will the events described in 'Tesla Can Now...' occur as predicted?]]></title>
+      <description><![CDATA[Based on the article titled 'Tesla Can Now Test Its Autonomous Vehicle Technology On Public Streets In Nevada', will the main predictions or events described come to fruition?]]></description>
+      <link>https://www.objectwire.org/tesla-can-now-test-its-autonomous-vehicle-technology-on-public-streets-in-nevada</link>
+      <guid isPermaLink="false">ai_event_5b1c7206dfdb41948e809a49b6231e49</guid>
+      <pubDate>Mon, 3 Nov 2025 01:28:06 +0000</pubDate>
+      <category>tech</category>
+      <source url="https://www.objectwire.org/tesla-can-now-test-its-autonomous-vehicle-technology-on-public-streets-in-nevada"><![CDATA[www.objectwire.org]]></source>
+      <confidence>0.700</confidence>
+      <addedToLedger>true</addedToLedger>
+      <marketId>ai_market_9b077f532cd545c4a86990b986d44650</marketId>
+      <marketUrl>http://localhost:3000/markets/ai_market_9b077f532cd545c4a86990b986d44650</marketUrl>
+      <options>
+        <option><![CDATA[Yes, events will occur]]></option>
+        <option><![CDATA[No, events will not occur]]></option>
+        <option><![CDATA[Partially accurate]]></option>
+      </options>
+    </item>
+  </channel>
+</rss>
