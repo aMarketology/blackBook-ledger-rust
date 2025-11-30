@@ -172,12 +172,15 @@ impl AppState {
         // TODO: Initialize authorized accounts for hot upgrades later
         // let authorized_accounts = vec![...];
         
+        // Load existing AI events and markets from RSS file on startup
+        let (loaded_ai_events, loaded_markets) = load_events_from_rss();
+        
         let mut state = Self {
             ledger: Ledger::new_full_node(),
-            markets: HashMap::new(),
+            markets: loaded_markets,  // Start with markets loaded from RSS
             live_bets: Vec::new(),
             // proxy_state: ProxyState::new(authorized_accounts),
-            ai_events: Vec::new(),
+            ai_events: loaded_ai_events,  // Start with events loaded from RSS
             market_activities: Vec::new(),
             blockchain_activities: Vec::new(),
         };
@@ -2701,9 +2704,32 @@ async fn create_ai_event(
                 payload.event.confidence * 100.0, payload.source.domain),
         );
         
+        // Log to blockchain activity feed (visible at /ledger/json)
+        app_state.log_blockchain_activity(
+            "🤖",
+            "AI_EVENT_CREATED",
+            &format!("AI Agent → {} | Confidence: {:.1}% | Category: {} | Market: {} | Source: {}", 
+                payload.event.title, 
+                payload.event.confidence * 100.0,
+                payload.event.category,
+                market_id_str,
+                payload.source.domain)
+        );
+        
         println!("🤖 AI Event added to ledger: {} (confidence: {:.2})", 
             payload.event.title, payload.event.confidence);
     } else {
+        // Log RSS-only event to blockchain activity feed
+        app_state.log_blockchain_activity(
+            "📋",
+            "AI_EVENT_RSS_ONLY",
+            &format!("AI Agent → {} | Confidence: {:.1}% (below 55.5% threshold) | Category: {} | Source: {}", 
+                payload.event.title, 
+                payload.event.confidence * 100.0,
+                payload.event.category,
+                payload.source.domain)
+        );
+        
         println!("📋 AI Event added to RSS only: {} (confidence: {:.2} - below 0.555 threshold)", 
             payload.event.title, payload.event.confidence);
     }
@@ -2780,6 +2806,204 @@ async fn get_ai_events_rss(
             Err(StatusCode::INTERNAL_SERVER_ERROR)
         }
     }
+}
+
+/// Load AI events from RSS file on startup using quick-xml
+/// Returns (Vec<AiEvent>, HashMap<String, PredictionMarket>) for events with markets
+fn load_events_from_rss() -> (Vec<AiEvent>, HashMap<String, PredictionMarket>) {
+    use quick_xml::events::Event;
+    use quick_xml::Reader;
+    
+    let mut ai_events: Vec<AiEvent> = Vec::new();
+    let mut markets: HashMap<String, PredictionMarket> = HashMap::new();
+    
+    // Try to read the RSS file
+    let rss_content = match std::fs::read_to_string("src/event.rss") {
+        Ok(content) => content,
+        Err(e) => {
+            println!("📄 No existing event.rss found or error reading: {} - starting fresh", e);
+            return (ai_events, markets);
+        }
+    };
+    
+    let mut reader = Reader::from_str(&rss_content);
+    // Note: trim_text is enabled by default in quick-xml 0.31
+    
+    // Temporary storage for current item being parsed
+    let mut current_item: Option<TempRssItem> = None;
+    let mut current_element = String::new();
+    let mut in_options = false;
+    
+    // Temporary struct to hold parsed RSS item data
+    struct TempRssItem {
+        title: String,
+        description: String,
+        link: String,
+        guid: String,
+        pub_date: String,
+        category: String,
+        source_url: String,
+        source_domain: String,
+        confidence: f64,
+        added_to_ledger: bool,
+        market_id: Option<String>,
+        options: Vec<String>,
+    }
+    
+    impl Default for TempRssItem {
+        fn default() -> Self {
+            Self {
+                title: String::new(),
+                description: String::new(),
+                link: String::new(),
+                guid: String::new(),
+                pub_date: String::new(),
+                category: String::new(),
+                source_url: String::new(),
+                source_domain: String::new(),
+                confidence: 0.0,
+                added_to_ledger: false,
+                market_id: None,
+                options: Vec::new(),
+            }
+        }
+    }
+    
+    loop {
+        match reader.read_event() {
+            Ok(Event::Start(ref e)) => {
+                let name = String::from_utf8_lossy(e.name().as_ref()).to_string();
+                current_element = name.clone();
+                
+                if name == "item" {
+                    current_item = Some(TempRssItem::default());
+                } else if name == "options" {
+                    in_options = true;
+                } else if name == "source" {
+                    // Extract source URL from attribute
+                    if let Some(ref mut item) = current_item {
+                        for attr in e.attributes().flatten() {
+                            if attr.key.as_ref() == b"url" {
+                                item.source_url = String::from_utf8_lossy(&attr.value).to_string();
+                            }
+                        }
+                    }
+                }
+            }
+            Ok(Event::End(ref e)) => {
+                let name = String::from_utf8_lossy(e.name().as_ref()).to_string();
+                
+                if name == "item" {
+                    // Process completed item
+                    if let Some(item) = current_item.take() {
+                        // Clean up the title (remove status badge)
+                        let clean_title = item.title
+                            .replace("✅ ACTIVE MARKET - ", "")
+                            .replace("📋 RSS ONLY - ", "");
+                        
+                        // Parse the pub_date to get created_at timestamp
+                        let created_at = chrono::DateTime::parse_from_rfc2822(&item.pub_date)
+                            .map(|dt| dt.timestamp() as u64)
+                            .unwrap_or_else(|_| {
+                                std::time::SystemTime::now()
+                                    .duration_since(std::time::UNIX_EPOCH)
+                                    .unwrap()
+                                    .as_secs()
+                            });
+                        
+                        // Create the AiEvent
+                        let ai_event = AiEvent {
+                            id: item.guid.clone(),
+                            source: AiEventSource {
+                                domain: item.source_domain.clone(),
+                                url: item.source_url.clone(),
+                            },
+                            event: AiEventData {
+                                title: clean_title.clone(),
+                                description: item.description.clone(),
+                                category: item.category.clone(),
+                                options: item.options.clone(),
+                                confidence: item.confidence,
+                                source_url: item.link.clone(),
+                            },
+                            created_at,
+                            added_to_ledger: item.added_to_ledger,
+                            market_id: item.market_id.clone(),
+                        };
+                        
+                        // If this event has a market, recreate the market
+                        if item.added_to_ledger {
+                            if let Some(ref market_id) = item.market_id {
+                                let market = PredictionMarket::new(
+                                    market_id.clone(),
+                                    clean_title.clone(),
+                                    item.description.clone(),
+                                    item.category.clone(),
+                                    item.options.clone(),
+                                );
+                                markets.insert(market_id.clone(), market);
+                                println!("   📈 Restored market: {} ({})", clean_title, market_id);
+                            }
+                        }
+                        
+                        ai_events.push(ai_event);
+                    }
+                } else if name == "options" {
+                    in_options = false;
+                }
+                current_element.clear();
+            }
+            Ok(Event::Text(ref e)) => {
+                if let Some(ref mut item) = current_item {
+                    let text = String::from_utf8_lossy(e.as_ref()).trim().to_string();
+                    if !text.is_empty() {
+                        match current_element.as_str() {
+                            "title" => item.title = text,
+                            "description" => item.description = text,
+                            "link" => item.link = text,
+                            "guid" => item.guid = text,
+                            "pubDate" => item.pub_date = text,
+                            "category" => item.category = text,
+                            "source" => item.source_domain = text,
+                            "confidence" => item.confidence = text.parse().unwrap_or(0.0),
+                            "addedToLedger" => item.added_to_ledger = text == "true",
+                            "marketId" => item.market_id = Some(text),
+                            "option" if in_options => item.options.push(text),
+                            _ => {}
+                        }
+                    }
+                }
+            }
+            Ok(Event::CData(ref e)) => {
+                if let Some(ref mut item) = current_item {
+                    let text = String::from_utf8_lossy(e.as_ref()).trim().to_string();
+                    if !text.is_empty() {
+                        match current_element.as_str() {
+                            "title" => item.title = text,
+                            "description" => item.description = text,
+                            "source" => item.source_domain = text,
+                            "option" if in_options => item.options.push(text),
+                            _ => {}
+                        }
+                    }
+                }
+            }
+            Ok(Event::Eof) => break,
+            Err(e) => {
+                eprintln!("❌ Error parsing RSS at position {}: {:?}", reader.buffer_position(), e);
+                break;
+            }
+            _ => {}
+        }
+    }
+    
+    // Reverse to maintain chronological order (RSS has newest first)
+    ai_events.reverse();
+    
+    println!("✅ Loaded {} AI events from event.rss", ai_events.len());
+    println!("✅ Restored {} prediction markets from RSS", markets.len());
+    
+    (ai_events, markets)
 }
 
 /// Helper function to update the RSS feed file
