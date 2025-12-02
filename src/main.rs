@@ -661,6 +661,7 @@ async fn main() {
         .route("/resolve/:market_id/:winning_option", post(resolve_market))
         .route("/bets/:account", get(get_user_bets))  // Get all bets for an account
         .route("/markets/:id/bets", get(get_market_bets))  // Get all bets for a market
+        .route("/markets/:id/stats", get(get_market_stats))  // Get detailed market statistics
         
         // Casino & General Wager endpoints (for blackjack, poker, etc.)
         .route("/wager", post(place_wager))
@@ -2418,6 +2419,105 @@ async fn get_market_bets(
         "option_stats": option_stats,
         "current_odds": odds,
         "bets": bets
+    })))
+}
+
+/// Get detailed statistics for a specific market
+async fn get_market_stats(
+    State(state): State<SharedState>,
+    Path(market_id): Path<String>
+) -> Result<Json<Value>, StatusCode> {
+    let app_state = state.lock().unwrap();
+    
+    let market = match app_state.markets.get(&market_id) {
+        Some(m) => m,
+        None => return Err(StatusCode::NOT_FOUND)
+    };
+    
+    // Build detailed option stats
+    let option_stats: Vec<serde_json::Value> = market.option_stats.iter().enumerate().map(|(i, stat)| {
+        let percentage = if market.total_volume > 0.0 {
+            (stat.total_volume / market.total_volume) * 100.0
+        } else {
+            0.0
+        };
+        
+        // Calculate implied probability (odds)
+        let implied_probability = if market.total_volume > 0.0 {
+            stat.total_volume / market.total_volume
+        } else {
+            1.0 / market.options.len() as f64
+        };
+        
+        // Calculate decimal odds (payout multiplier if this option wins)
+        let decimal_odds = if implied_probability > 0.0 {
+            1.0 / implied_probability
+        } else {
+            0.0
+        };
+        
+        json!({
+            "option": market.options.get(i).unwrap_or(&"Unknown".to_string()),
+            "option_index": i,
+            "total_volume": stat.total_volume,
+            "bet_count": stat.bet_count,
+            "unique_bettors": stat.unique_bettors.len(),
+            "bettors_list": stat.unique_bettors.iter().collect::<Vec<_>>(),
+            "percentage_of_pool": format!("{:.2}%", percentage),
+            "implied_probability": format!("{:.2}%", implied_probability * 100.0),
+            "decimal_odds": format!("{:.2}x", decimal_odds),
+            "potential_payout_per_bb": format!("{:.4} BB", decimal_odds)
+        })
+    }).collect();
+    
+    // Calculate overall market health metrics
+    let total_unique_bettors: usize = market.unique_bettors.len();
+    let avg_bet_size = if market.bet_count > 0 {
+        market.total_volume / market.bet_count as f64
+    } else {
+        0.0
+    };
+    
+    // Find leading option
+    let leading_option = market.option_stats.iter()
+        .enumerate()
+        .max_by(|a, b| a.1.total_volume.partial_cmp(&b.1.total_volume).unwrap())
+        .map(|(i, _)| market.options.get(i).unwrap_or(&"Unknown".to_string()).clone());
+    
+    // Calculate market balance (how evenly distributed bets are)
+    let market_balance = if market.options.len() > 1 && market.total_volume > 0.0 {
+        let expected_per_option = market.total_volume / market.options.len() as f64;
+        let variance: f64 = market.option_stats.iter()
+            .map(|s| (s.total_volume - expected_per_option).powi(2))
+            .sum::<f64>() / market.options.len() as f64;
+        let std_dev = variance.sqrt();
+        let balance_score = 100.0 * (1.0 - (std_dev / market.total_volume).min(1.0));
+        format!("{:.1}%", balance_score)
+    } else {
+        "N/A".to_string()
+    };
+    
+    Ok(Json(json!({
+        "success": true,
+        "market_id": market_id,
+        "market_title": market.title,
+        "category": market.category,
+        "description": market.description,
+        "status": if market.is_resolved { "RESOLVED" } else { "ACTIVE" },
+        "winning_option": market.winning_option.map(|i| market.options.get(i).unwrap_or(&"Unknown".to_string()).clone()),
+        "created_at": market.created_at,
+        "volume_stats": {
+            "total_volume": market.total_volume,
+            "total_bets": market.bet_count,
+            "unique_bettors": total_unique_bettors,
+            "average_bet_size": format!("{:.2} BB", avg_bet_size)
+        },
+        "option_stats": option_stats,
+        "market_health": {
+            "leading_option": leading_option,
+            "market_balance": market_balance,
+            "liquidity": if market.total_volume > 1000.0 { "HIGH" } else if market.total_volume > 100.0 { "MEDIUM" } else { "LOW" }
+        }
     })))
 }
 
