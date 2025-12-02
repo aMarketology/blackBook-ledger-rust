@@ -20,6 +20,27 @@ use ledger::Ledger;
 use hot_upgrades::{ProxyState, AuthorizedAccount, AuthorityLevel};
 use auth::{UserRegistry, SupabaseConfig, User, SignupRequest, LoginRequest, AuthResponse};
 
+// Individual bet record for tracking outcomes and payouts
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MarketBet {
+    pub id: String,
+    pub market_id: String,
+    pub bettor: String,
+    pub outcome: usize,          // Index of the option they bet on
+    pub amount: f64,
+    pub timestamp: u64,
+    pub status: String,          // "PENDING", "WON", "LOST"
+    pub payout: Option<f64>,     // Amount won (if won)
+}
+
+// Option-level statistics
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct OptionStats {
+    pub total_volume: f64,       // Total BB bet on this option
+    pub bet_count: u64,          // Number of bets on this option
+    pub unique_bettors: Vec<String>, // Unique bettors on this option
+}
+
 // Prediction market struct - now tracks bettors for leaderboard
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PredictionMarket {
@@ -33,11 +54,17 @@ pub struct PredictionMarket {
     pub escrow_address: String,
     pub created_at: u64,
     
-    // NEW: Tracking for leaderboard
+    // Tracking for leaderboard
     pub total_volume: f64,           // Total amount bet
     pub unique_bettors: Vec<String>, // Track unique bettors
     pub bet_count: u64,              // Total number of bets
     pub on_leaderboard: bool,        // Promoted when 10+ bettors
+    
+    // NEW: Per-option statistics
+    pub option_stats: Vec<OptionStats>,
+    
+    // NEW: Individual bet tracking for payouts
+    pub bets: Vec<MarketBet>,
 }
 
 impl PredictionMarket {
@@ -48,6 +75,7 @@ impl PredictionMarket {
         category: String,
         options: Vec<String>,
     ) -> Self {
+        let option_count = options.len();
         Self {
             id,
             title,
@@ -65,23 +93,126 @@ impl PredictionMarket {
             unique_bettors: Vec::new(),
             bet_count: 0,
             on_leaderboard: false,
+            option_stats: (0..option_count).map(|_| OptionStats::default()).collect(),
+            bets: Vec::new(),
         }
     }
     
-    /// Record a bet and check if should be promoted to leaderboard
-    pub fn record_bet(&mut self, bettor: &str, amount: f64) {
+    /// Record a bet with outcome tracking for payouts
+    pub fn record_bet(&mut self, bettor: &str, amount: f64, outcome: usize) -> String {
+        // Generate bet ID
+        let bet_id = format!("bet_{}_{}", self.id, Uuid::new_v4().simple());
+        
+        // Update global stats
         self.bet_count += 1;
         self.total_volume += amount;
         
-        // Add unique bettor if new
+        // Add unique bettor if new (global)
         if !self.unique_bettors.contains(&bettor.to_string()) {
             self.unique_bettors.push(bettor.to_string());
         }
+        
+        // Update option-level stats
+        if outcome < self.option_stats.len() {
+            let option_stat = &mut self.option_stats[outcome];
+            option_stat.total_volume += amount;
+            option_stat.bet_count += 1;
+            if !option_stat.unique_bettors.contains(&bettor.to_string()) {
+                option_stat.unique_bettors.push(bettor.to_string());
+            }
+        }
+        
+        // Store individual bet for payout tracking
+        let market_bet = MarketBet {
+            id: bet_id.clone(),
+            market_id: self.id.clone(),
+            bettor: bettor.to_string(),
+            outcome,
+            amount,
+            timestamp: std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_secs(),
+            status: "PENDING".to_string(),
+            payout: None,
+        };
+        self.bets.push(market_bet);
         
         // Promote to leaderboard when 10+ unique bettors
         if self.unique_bettors.len() >= 10 && !self.on_leaderboard {
             self.on_leaderboard = true;
         }
+        
+        bet_id
+    }
+    
+    /// Calculate odds for each option based on betting volume
+    pub fn calculate_odds(&self) -> Vec<f64> {
+        if self.total_volume == 0.0 {
+            // Equal odds when no bets
+            return vec![1.0 / self.options.len() as f64; self.options.len()];
+        }
+        
+        self.option_stats
+            .iter()
+            .map(|stat| {
+                if stat.total_volume > 0.0 {
+                    self.total_volume / stat.total_volume
+                } else {
+                    0.0 // No bets on this option yet
+                }
+            })
+            .collect()
+    }
+    
+    /// Process payouts when market is resolved
+    /// Returns list of (bettor, payout_amount) for winners
+    pub fn process_payouts(&mut self, winning_outcome: usize) -> Vec<(String, f64)> {
+        let mut payouts: Vec<(String, f64)> = Vec::new();
+        
+        // Get total volume bet on winning option
+        let winning_volume = if winning_outcome < self.option_stats.len() {
+            self.option_stats[winning_outcome].total_volume
+        } else {
+            return payouts; // Invalid outcome
+        };
+        
+        // If no one bet on winning option, no payouts
+        if winning_volume == 0.0 {
+            // Mark all bets as lost
+            for bet in &mut self.bets {
+                bet.status = "LOST".to_string();
+            }
+            return payouts;
+        }
+        
+        // Calculate payout multiplier: total_pool / winning_pool
+        let payout_multiplier = self.total_volume / winning_volume;
+        
+        // Process each bet
+        for bet in &mut self.bets {
+            if bet.outcome == winning_outcome {
+                // Winner! Calculate payout proportional to their stake
+                let payout = bet.amount * payout_multiplier;
+                bet.status = "WON".to_string();
+                bet.payout = Some(payout);
+                payouts.push((bet.bettor.clone(), payout));
+            } else {
+                bet.status = "LOST".to_string();
+                bet.payout = Some(0.0);
+            }
+        }
+        
+        payouts
+    }
+    
+    /// Get bets for a specific account
+    pub fn get_bets_for_account(&self, account: &str) -> Vec<MarketBet> {
+        self.bets
+            .iter()
+            .filter(|bet| bet.bettor.to_uppercase() == account.to_uppercase())
+            .cloned()
+            .collect()
     }
 }
 
@@ -528,6 +659,8 @@ async fn main() {
         // Betting endpoints
         .route("/bet", post(place_bet))
         .route("/resolve/:market_id/:winning_option", post(resolve_market))
+        .route("/bets/:account", get(get_user_bets))  // Get all bets for an account
+        .route("/markets/:id/bets", get(get_market_bets))  // Get all bets for a market
         
         // Casino & General Wager endpoints (for blackjack, poker, etc.)
         .route("/wager", post(place_wager))
@@ -1561,28 +1694,45 @@ async fn place_bet(
             
             // Track the bet and check for leaderboard promotion
             if let Some(market) = app_state.markets.get_mut(&payload.market) {
-                market.record_bet(&payload.account, payload.amount);
+                // Record bet with outcome for payout tracking
+                let bet_id = market.record_bet(&payload.account, payload.amount, payload.outcome);
                 
                 let on_leaderboard = market.on_leaderboard;
                 let unique_bettors = market.unique_bettors.len();
+                let total_volume = market.total_volume;
+                let total_bets = market.bet_count;
                 
-                // Log to blockchain activity feed
-                app_state.log_blockchain_activity(
-                    "🎲",
-                    "BET_PLACED",
-                    &format!("{} bet {} BB on \"{}\" → {} | Market ID: {} | Balance: {} BB | Total Bettors: {}", 
-                        payload.account, payload.amount, market_title, market_option, payload.market, user_balance, unique_bettors)
-                );
+                // Get option stats for response
+                let option_stats: Vec<_> = market.option_stats.iter().enumerate().map(|(i, stat)| {
+                    json!({
+                        "option": market.options.get(i).unwrap_or(&"Unknown".to_string()),
+                        "total_volume": stat.total_volume,
+                        "bet_count": stat.bet_count,
+                        "unique_bettors": stat.unique_bettors.len()
+                    })
+                }).collect();
                 
-                Ok(Json(json!({
+                // Calculate current odds
+                let odds = market.calculate_odds();
+                
+                // Build response before releasing market borrow
+                let response = json!({
                     "success": true,
                     "transaction_id": tx_id,
+                    "bet_id": bet_id,
                     "bet": {
-                        "market": market_title,
-                        "outcome": market_option,
+                        "market": market_title.clone(),
+                        "outcome": market_option.clone(),
+                        "outcome_index": payload.outcome,
                         "amount": payload.amount
                     },
                     "new_balance": user_balance,
+                    "market_stats": {
+                        "total_volume": total_volume,
+                        "total_bets": total_bets,
+                        "option_stats": option_stats,
+                        "current_odds": odds
+                    },
                     "market_progress": {
                         "unique_bettors": unique_bettors,
                         "bettors_needed_for_leaderboard": 10,
@@ -1595,7 +1745,21 @@ async fn place_bet(
                             format!("{} more bettors needed for leaderboard", 10 - unique_bettors)
                         }
                     }
-                })))
+                });
+                
+                // Now log after we're done with market borrow
+                // (response is built, market reference no longer needed)
+                let _ = market;  // Explicitly release borrow
+                
+                // Log to blockchain activity feed
+                app_state.log_blockchain_activity(
+                    "🎲",
+                    "BET_PLACED",
+                    &format!("{} bet {} BB on \"{}\" → {} | Market ID: {} | Balance: {} BB | Total Bettors: {}", 
+                        payload.account, payload.amount, market_title, market_option, payload.market, user_balance, unique_bettors)
+                );
+                
+                Ok(Json(response))
             } else {
                 Ok(Json(json!({
                     "success": false,
@@ -1776,8 +1940,8 @@ async fn resolve_market(
     State(state): State<SharedState>,
     Path((market_id, winning_option)): Path<(String, usize)>
 ) -> Result<Json<Value>, StatusCode> {
-    // First get market info and escrow balance without mutable borrow
-    let (market_title, winning_option_text, escrow_balance) = {
+    // First get market info without mutable borrow
+    let (market_title, winning_option_text, total_volume, is_already_resolved, valid_option) = {
         let app_state = state.lock().unwrap();
         
         // Get the market
@@ -1786,54 +1950,94 @@ async fn resolve_market(
             None => return Err(StatusCode::NOT_FOUND)
         };
         
-        // Check if already resolved
-        if market.is_resolved {
-            return Ok(Json(json!({
-                "success": false,
-                "error": "Market is already resolved"
-            })));
-        }
+        let valid_option = winning_option < market.options.len();
+        let winning_text = if valid_option {
+            market.options[winning_option].clone()
+        } else {
+            String::new()
+        };
         
-        // Check if winning option is valid
-        if winning_option >= market.options.len() {
-            return Ok(Json(json!({
-                "success": false,
-                "error": "Invalid winning option index"
-            })));
-        }
-        
-        // Get data before mutation
-        let escrow_balance = app_state.ledger.get_balance(&market.escrow_address);
-        let market_title = market.title.clone();
-        let winning_option_text = market.options[winning_option].clone();
-        
-        (market_title, winning_option_text, escrow_balance)
+        (
+            market.title.clone(),
+            winning_text,
+            market.total_volume,
+            market.is_resolved,
+            valid_option
+        )
     };
     
-    // Now get mutable access to mark as resolved
-    {
-        let mut app_state = state.lock().unwrap();
-        let market = app_state.markets.get_mut(&market_id).unwrap(); // We already checked it exists
+    // Check if already resolved
+    if is_already_resolved {
+        return Ok(Json(json!({
+            "success": false,
+            "error": "Market is already resolved"
+        })));
+    }
+    
+    // Check if winning option is valid
+    if !valid_option {
+        return Ok(Json(json!({
+            "success": false,
+            "error": "Invalid winning option index"
+        })));
+    }
+    
+    // Now process payouts and resolve
+    let mut app_state = state.lock().unwrap();
+    
+    // Process payouts first
+    let payouts = {
+        let market = app_state.markets.get_mut(&market_id).unwrap();
         market.is_resolved = true;
         market.winning_option = Some(winning_option);
+        market.process_payouts(winning_option)
+    };
+    
+    // Credit winners
+    let mut payout_details: Vec<serde_json::Value> = Vec::new();
+    let mut total_paid_out = 0.0;
+    
+    for (bettor, payout_amount) in &payouts {
+        // Add tokens to winner's balance
+        if let Err(e) = app_state.ledger.add_tokens(bettor, *payout_amount) {
+            println!("⚠️ Failed to pay {} to {}: {}", payout_amount, bettor, e);
+            continue;
+        }
         
-        // Log to terminal
+        total_paid_out += payout_amount;
+        
+        payout_details.push(json!({
+            "bettor": bettor,
+            "payout": payout_amount,
+            "new_balance": app_state.ledger.get_balance(bettor)
+        }));
+        
+        // Log each payout
         app_state.log_blockchain_activity(
-            "🏆",
-            "MARKET_RESOLVED",
-            &format!("\"{}\" | Winner: {} | Escrow: {} BB", 
-                market_title, winning_option_text, escrow_balance)
+            "💰",
+            "BET_PAYOUT",
+            &format!("{} won {} BB from \"{}\" (option: {})", 
+                bettor, payout_amount, market_title, winning_option_text)
         );
     }
     
-    // For demo purposes, we'll just resolve without actual payout logic
-    // In a real system, you'd track individual bets and pay out winners
+    // Log market resolution
+    app_state.log_blockchain_activity(
+        "🏆",
+        "MARKET_RESOLVED",
+        &format!("\"{}\" | Winner: {} | Total Pool: {} BB | Paid Out: {} BB | {} winners", 
+            market_title, winning_option_text, total_volume, total_paid_out, payouts.len())
+    );
     
     Ok(Json(json!({
         "success": true,
         "message": format!("Market '{}' resolved with winning option: {}", market_title, winning_option_text),
         "winning_option": winning_option,
-        "total_escrow": escrow_balance
+        "winning_option_text": winning_option_text,
+        "total_pool": total_volume,
+        "total_paid_out": total_paid_out,
+        "winner_count": payouts.len(),
+        "payouts": payout_details
     })))
 }
 
@@ -1972,6 +2176,31 @@ async fn get_market(
     
     match app_state.markets.get(&market_id) {
         Some(market) => {
+            // Build option stats with percentages and odds
+            let option_stats: Vec<serde_json::Value> = market.option_stats.iter().enumerate().map(|(i, stat)| {
+                let percentage = if market.total_volume > 0.0 {
+                    (stat.total_volume / market.total_volume) * 100.0
+                } else {
+                    0.0
+                };
+                let odds = if stat.total_volume > 0.0 && market.total_volume > 0.0 {
+                    market.total_volume / stat.total_volume
+                } else {
+                    0.0
+                };
+                
+                json!({
+                    "option": market.options.get(i).unwrap_or(&"Unknown".to_string()),
+                    "option_index": i,
+                    "total_volume": stat.total_volume,
+                    "bet_count": stat.bet_count,
+                    "unique_bettors": stat.unique_bettors.len(),
+                    "percentage_of_pool": percentage,
+                    "implied_probability": if percentage > 0.0 { format!("{:.1}%", percentage) } else { "N/A".to_string() },
+                    "payout_multiplier": if odds > 0.0 { format!("{:.2}x", odds) } else { "N/A".to_string() }
+                })
+            }).collect();
+            
             Ok(Json(json!({
                 "success": true,
                 "market": {
@@ -1987,6 +2216,7 @@ async fn get_market(
                     "is_resolved": market.is_resolved,
                     "winning_option": market.winning_option,
                     "created_at": market.created_at,
+                    "option_stats": option_stats
                 }
             })))
         }
@@ -2051,6 +2281,144 @@ async fn get_leaderboard_by_category(
         "leaderboard": featured,
         "count": featured.len(),
     }))
+}
+
+/// Get all bets for a specific user account
+async fn get_user_bets(
+    State(state): State<SharedState>,
+    Path(account): Path<String>
+) -> Json<Value> {
+    let app_state = state.lock().unwrap();
+    
+    // Collect all bets from all markets for this account
+    let mut user_bets: Vec<serde_json::Value> = Vec::new();
+    let mut total_wagered = 0.0;
+    let mut total_won = 0.0;
+    let mut wins = 0;
+    let mut losses = 0;
+    let mut pending = 0;
+    
+    for market in app_state.markets.values() {
+        let account_bets = market.get_bets_for_account(&account);
+        
+        for bet in account_bets {
+            total_wagered += bet.amount;
+            
+            match bet.status.as_str() {
+                "WON" => {
+                    wins += 1;
+                    if let Some(payout) = bet.payout {
+                        total_won += payout;
+                    }
+                }
+                "LOST" => losses += 1,
+                _ => pending += 1,
+            }
+            
+            user_bets.push(json!({
+                "bet_id": bet.id,
+                "market_id": bet.market_id,
+                "market_title": market.title,
+                "outcome": market.options.get(bet.outcome).unwrap_or(&"Unknown".to_string()),
+                "outcome_index": bet.outcome,
+                "amount": bet.amount,
+                "timestamp": bet.timestamp,
+                "status": bet.status,
+                "payout": bet.payout,
+                "market_resolved": market.is_resolved,
+                "winning_option": market.winning_option
+            }));
+        }
+    }
+    
+    // Sort by timestamp (newest first)
+    user_bets.sort_by(|a, b| {
+        let ts_a = a["timestamp"].as_u64().unwrap_or(0);
+        let ts_b = b["timestamp"].as_u64().unwrap_or(0);
+        ts_b.cmp(&ts_a)
+    });
+    
+    let profit_loss = total_won - total_wagered;
+    
+    Json(json!({
+        "success": true,
+        "account": account,
+        "summary": {
+            "total_bets": user_bets.len(),
+            "total_wagered": total_wagered,
+            "total_won": total_won,
+            "profit_loss": profit_loss,
+            "wins": wins,
+            "losses": losses,
+            "pending": pending,
+            "win_rate": if wins + losses > 0 { 
+                format!("{:.1}%", (wins as f64 / (wins + losses) as f64) * 100.0) 
+            } else { 
+                "N/A".to_string() 
+            }
+        },
+        "bets": user_bets
+    }))
+}
+
+/// Get all bets for a specific market
+async fn get_market_bets(
+    State(state): State<SharedState>,
+    Path(market_id): Path<String>
+) -> Result<Json<Value>, StatusCode> {
+    let app_state = state.lock().unwrap();
+    
+    let market = match app_state.markets.get(&market_id) {
+        Some(m) => m,
+        None => return Err(StatusCode::NOT_FOUND)
+    };
+    
+    // Build bet list with details
+    let bets: Vec<serde_json::Value> = market.bets.iter().map(|bet| {
+        json!({
+            "bet_id": bet.id,
+            "bettor": bet.bettor,
+            "outcome": market.options.get(bet.outcome).unwrap_or(&"Unknown".to_string()),
+            "outcome_index": bet.outcome,
+            "amount": bet.amount,
+            "timestamp": bet.timestamp,
+            "status": bet.status,
+            "payout": bet.payout
+        })
+    }).collect();
+    
+    // Build option stats
+    let option_stats: Vec<serde_json::Value> = market.option_stats.iter().enumerate().map(|(i, stat)| {
+        json!({
+            "option": market.options.get(i).unwrap_or(&"Unknown".to_string()),
+            "option_index": i,
+            "total_volume": stat.total_volume,
+            "bet_count": stat.bet_count,
+            "unique_bettors": stat.unique_bettors.len(),
+            "percentage_of_pool": if market.total_volume > 0.0 {
+                (stat.total_volume / market.total_volume) * 100.0
+            } else {
+                0.0
+            }
+        })
+    }).collect();
+    
+    // Calculate odds
+    let odds = market.calculate_odds();
+    
+    Ok(Json(json!({
+        "success": true,
+        "market_id": market_id,
+        "market_title": market.title,
+        "is_resolved": market.is_resolved,
+        "winning_option": market.winning_option,
+        "total_volume": market.total_volume,
+        "total_bets": market.bet_count,
+        "unique_bettors": market.unique_bettors.len(),
+        "option_stats": option_stats,
+        "current_odds": odds,
+        "bets": bets
+    })))
 }
 
 // ===== SIMPLE SCRAPER HANDLER =====
