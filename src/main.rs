@@ -16,9 +16,11 @@ mod hot_upgrades;
 mod markets;
 mod escrow;
 mod auth;
+mod cpmm;
 use ledger::Ledger;
 use hot_upgrades::{ProxyState, AuthorizedAccount, AuthorityLevel};
 use auth::{UserRegistry, SupabaseConfig, User, SignupRequest, LoginRequest, AuthResponse};
+use cpmm::PendingEvent;
 
 // Individual bet record for tracking outcomes and payouts
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -65,6 +67,20 @@ pub struct PredictionMarket {
     
     // NEW: Individual bet tracking for payouts
     pub bets: Vec<MarketBet>,
+    
+    // CPMM Integration (Phase 2.2)
+    #[serde(default)]
+    pub market_status: cpmm::EventStatus,           // Lifecycle status (default: Active for legacy)
+    #[serde(default)]
+    pub cpmm_pool: Option<cpmm::CPMMPool>,          // CPMM pool (None for legacy markets)
+    #[serde(default)]
+    pub provisional_deadline: Option<u64>,          // When viability check happens (72h after launch)
+    #[serde(default)]
+    pub betting_closes_at: Option<u64>,             // When trading stops
+    #[serde(default)]
+    pub launched_by: Option<String>,                // Who launched the market with initial liquidity
+    #[serde(default)]
+    pub source_event_id: Option<String>,            // Link back to PendingEvent if launched from inbox
 }
 
 impl PredictionMarket {
@@ -95,6 +111,13 @@ impl PredictionMarket {
             on_leaderboard: false,
             option_stats: (0..option_count).map(|_| OptionStats::default()).collect(),
             bets: Vec::new(),
+            // CPMM fields - default to Active status (legacy behavior)
+            market_status: cpmm::EventStatus::Active,
+            cpmm_pool: None,
+            provisional_deadline: None,
+            betting_closes_at: None,
+            launched_by: None,
+            source_event_id: None,
         }
     }
     
@@ -293,7 +316,8 @@ pub struct AppState {
     pub markets: HashMap<String, PredictionMarket>,
     pub live_bets: Vec<LivePriceBet>,  // Store all live bets for history
     // pub proxy_state: ProxyState,       // Hot upgrade system - TODO: fix integration
-    pub ai_events: Vec<AiEvent>,       // AI-generated events for RSS feed
+    pub ai_events: Vec<AiEvent>,       // AI-generated events for RSS feed (legacy)
+    pub pending_events: HashMap<String, PendingEvent>,  // NEW: Pending events inbox
     pub market_activities: Vec<MarketActivity>,  // Track all prediction market activities
     pub blockchain_activities: Vec<BlockchainActivity>,  // Real-time blockchain activity feed
 }
@@ -311,7 +335,8 @@ impl AppState {
             markets: loaded_markets,  // Start with markets loaded from RSS
             live_bets: Vec::new(),
             // proxy_state: ProxyState::new(authorized_accounts),
-            ai_events: loaded_ai_events,  // Start with events loaded from RSS
+            ai_events: loaded_ai_events,  // Start with events loaded from RSS (legacy)
+            pending_events: HashMap::new(),  // NEW: Initialize empty pending events inbox
             market_activities: Vec::new(),
             blockchain_activities: Vec::new(),
         };
@@ -580,6 +605,15 @@ struct AiEventRequest {
     event: AiEventData,
 }
 
+/// Request body for POST /events/:id/launch
+#[derive(Debug, Clone, Deserialize)]
+struct LaunchEventRequest {
+    /// Account launching the market (must have sufficient balance)
+    launcher: String,
+    /// Amount of BB tokens to provide as initial liquidity
+    liquidity_amount: f64,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct AiEventSource {
     domain: String,
@@ -689,6 +723,10 @@ async fn main() {
         .route("/ai/events/recent", get(get_recent_ai_events))
         .route("/ai/events/feed.rss", get(get_ai_events_rss))
         
+        // Pending Events (CPMM inbox) endpoints
+        .route("/events/pending", get(get_pending_events))
+        .route("/events/:id/launch", post(launch_event))
+        
         // Market Activity endpoints
         .route("/activities", get(get_market_activities))
         
@@ -736,6 +774,8 @@ async fn main() {
     println!("   GET  /activities - Get all market activities");
     println!("   POST /ai/events - Create AI-generated prediction event");
     println!("   GET  /ai/events/feed.rss - RSS feed of AI events");
+    println!("   GET  /events/pending - List pending events (CPMM inbox)");
+    println!("   POST /events/:id/launch - Launch pending event as market");
     println!("");
     println!("🔌 IPC Commands (Tauri Desktop App - 27 Total):");
     println!("   📊 Account Management (3):");
@@ -3253,6 +3293,218 @@ async fn get_recent_ai_events(
         "count": recent_events.len(),
         "events": recent_events
     }))
+}
+
+/// GET /events/pending - List all pending (un-launched) events from the inbox
+/// These are events that have been discovered by AI scrapers but not yet launched as markets
+async fn get_pending_events(
+    State(state): State<SharedState>,
+) -> Json<Value> {
+    let app_state = state.lock().unwrap();
+    
+    // Get all pending events, sorted by created_at descending (newest first)
+    let mut pending: Vec<_> = app_state.pending_events
+        .values()
+        .collect();
+    
+    pending.sort_by(|a, b| b.created_at.cmp(&a.created_at));
+    
+    let events: Vec<_> = pending.iter().map(|e| json!({
+        "id": e.id,
+        "title": e.title,
+        "description": e.description,
+        "category": e.category,
+        "options": e.options,
+        "confidence": e.confidence,
+        "source_url": e.source_url,
+        "source_domain": e.source_domain,
+        "created_at": e.created_at,
+        "expires_at": e.expires_at,
+        "resolution_date": e.resolution_date,
+        "status": e.status.to_string()
+    })).collect();
+    
+    Json(json!({
+        "success": true,
+        "count": events.len(),
+        "events": events,
+        "description": "Pending events waiting to be launched as prediction markets. Use POST /events/:id/launch to create a market."
+    }))
+}
+
+/// POST /events/:id/launch - Launch a pending event as a prediction market with CPMM
+/// 
+/// This endpoint:
+/// 1. Validates the event exists and is pending
+/// 2. Checks the launcher has sufficient funds
+/// 3. Deducts liquidity from launcher's account
+/// 4. Creates a CPMMPool with 50/50 split
+/// 5. Creates a PredictionMarket with Provisional status
+/// 6. Sets provisional_deadline to now + 72 hours
+/// 7. Grants 100% LP shares to the launcher
+/// 8. Logs the activity
+async fn launch_event(
+    State(state): State<SharedState>,
+    Path(event_id): Path<String>,
+    Json(payload): Json<LaunchEventRequest>,
+) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
+    let mut app_state = state.lock().unwrap();
+    
+    // 1. Validate event exists and is pending
+    let pending_event = match app_state.pending_events.get(&event_id) {
+        Some(event) => event.clone(),
+        None => {
+            return Err((StatusCode::NOT_FOUND, Json(json!({
+                "success": false,
+                "error": format!("Pending event '{}' not found", event_id)
+            }))));
+        }
+    };
+    
+    // Check event is actually pending
+    if pending_event.status != cpmm::EventStatus::Pending {
+        return Err((StatusCode::BAD_REQUEST, Json(json!({
+            "success": false,
+            "error": format!("Event '{}' is not pending (status: {})", event_id, pending_event.status)
+        }))));
+    }
+    
+    // 2. Validate liquidity amount meets minimum
+    if payload.liquidity_amount < cpmm::MINIMUM_LAUNCH_LIQUIDITY {
+        return Err((StatusCode::BAD_REQUEST, Json(json!({
+            "success": false,
+            "error": format!(
+                "Minimum liquidity required is {} BB. You provided {} BB.",
+                cpmm::MINIMUM_LAUNCH_LIQUIDITY,
+                payload.liquidity_amount
+            )
+        }))));
+    }
+    
+    // 3. Check launcher has sufficient funds
+    let launcher_balance = app_state.ledger.get_balance(&payload.launcher);
+    if launcher_balance < payload.liquidity_amount {
+        return Err((StatusCode::BAD_REQUEST, Json(json!({
+            "success": false,
+            "error": format!(
+                "Insufficient balance. {} has {} BB, but {} BB required.",
+                payload.launcher,
+                launcher_balance,
+                payload.liquidity_amount
+            )
+        }))));
+    }
+    
+    // 4. Generate market ID
+    let market_id = format!("cpmm_market_{}", uuid::Uuid::new_v4().simple());
+    
+    // 5. Deduct tokens from launcher and transfer to market escrow
+    let escrow_address = format!("ESCROW_{}", market_id);
+    match app_state.ledger.transfer(&payload.launcher, &escrow_address, payload.liquidity_amount) {
+        Ok(_) => {},
+        Err(e) => {
+            return Err((StatusCode::INTERNAL_SERVER_ERROR, Json(json!({
+                "success": false,
+                "error": format!("Failed to transfer funds: {}", e)
+            }))));
+        }
+    }
+    
+    // 6. Calculate timestamps
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs();
+    let provisional_deadline = now + cpmm::VIABILITY_PERIOD_SECONDS;
+    
+    // 7. Initialize CPMMPool with 50/50 split
+    let cpmm_pool = cpmm::CPMMPool::new(
+        payload.liquidity_amount,
+        pending_event.options.clone(),
+        &payload.launcher,
+    );
+    
+    // 8. Create PredictionMarket with Provisional status
+    let mut market = PredictionMarket::new(
+        market_id.clone(),
+        pending_event.title.clone(),
+        pending_event.description.clone(),
+        pending_event.category.clone(),
+        pending_event.options.clone(),
+    );
+    
+    // Set CPMM-specific fields
+    market.market_status = cpmm::EventStatus::Provisional;
+    market.cpmm_pool = Some(cpmm_pool);
+    market.provisional_deadline = Some(provisional_deadline);
+    market.launched_by = Some(payload.launcher.clone());
+    market.source_event_id = Some(event_id.clone());
+    market.escrow_address = escrow_address.clone();
+    market.total_volume = payload.liquidity_amount;
+    
+    // Get pool prices for response
+    let prices = market.cpmm_pool.as_ref().unwrap().calculate_prices();
+    
+    // 9. Insert market into state
+    app_state.markets.insert(market_id.clone(), market);
+    
+    // 10. Remove event from pending (it's now launched)
+    app_state.pending_events.remove(&event_id);
+    
+    // 11. Log blockchain activity
+    app_state.log_blockchain_activity(
+        "🚀",
+        "MARKET_LAUNCHED",
+        &format!(
+            "\"{}\" launched by {} with {} BB liquidity | Provisional until {}",
+            pending_event.title,
+            payload.launcher,
+            payload.liquidity_amount,
+            chrono::DateTime::from_timestamp(provisional_deadline as i64, 0)
+                .map(|dt| dt.format("%Y-%m-%d %H:%M UTC").to_string())
+                .unwrap_or_else(|| "unknown".to_string())
+        )
+    );
+    
+    // 12. Log market activity
+    app_state.track_activity(
+        "market_launch".to_string(),
+        Some(market_id.clone()),
+        Some(pending_event.title.clone()),
+        Some(payload.launcher.clone()),
+        Some(payload.liquidity_amount),
+        format!("Market launched with {} BB liquidity", payload.liquidity_amount),
+    );
+    
+    // 13. Return success response
+    Ok(Json(json!({
+        "success": true,
+        "market": {
+            "id": market_id,
+            "title": pending_event.title,
+            "description": pending_event.description,
+            "category": pending_event.category,
+            "options": pending_event.options,
+            "status": "Provisional",
+            "launched_by": payload.launcher,
+            "liquidity": payload.liquidity_amount,
+            "tvl": payload.liquidity_amount,
+            "escrow_address": escrow_address,
+            "provisional_deadline": provisional_deadline,
+            "provisional_deadline_human": chrono::DateTime::from_timestamp(provisional_deadline as i64, 0)
+                .map(|dt| dt.format("%Y-%m-%d %H:%M:%S UTC").to_string())
+                .unwrap_or_else(|| "unknown".to_string()),
+            "prices": prices,
+            "viability_threshold": cpmm::VIABILITY_THRESHOLD,
+            "lp_shares": {
+                payload.launcher.clone(): 1.0
+            }
+        },
+        "message": format!(
+            "Market launched! It will become Active if TVL reaches {} BB within 72 hours.",
+            cpmm::VIABILITY_THRESHOLD
+        )
+    })))
 }
 
 /// GET /ai/events/feed.rss - Get RSS feed of AI events
