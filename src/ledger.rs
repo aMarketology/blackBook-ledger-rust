@@ -69,35 +69,27 @@ pub struct Recipe {
 }
 
 impl Ledger {
-    /// Initialize ledger with 8 real blockchain accounts
-    /// Each account gets a dynamically generated L1_<UUID> address
-    /// Each account gets 1000 BB tokens (BlackBook tokens)
+    /// Initialize ledger with 8 real blockchain accounts + HOUSE
+    /// Uses GodMode for deterministic Ed25519-based addresses (same across restarts)
+    /// Each account gets 1000 BB tokens (BlackBook tokens), HOUSE gets 10,000 BB
     pub fn new_full_node() -> Self {
         let mut accounts = HashMap::new();
         let mut balances = HashMap::new();
 
-        // Display names for the 8 accounts + HOUSE account for casino
-        let names = vec![
-            "ALICE", "BOB", "CHARLIE", "DIANA", 
-            "ETHAN", "FIONA", "GEORGE", "HANNAH",
-            "HOUSE"  // Casino house account with large bankroll
-        ];
-
-        // Generate a dynamic L1_<UUID> address for each account
-        for name in names {
-            let uuid = uuid::Uuid::new_v4();
-            // Format: L1_<32 HEX UPPERCASE>
-            // Take the UUID hex (without hyphens) and uppercase it
-            let hex_uuid = uuid.simple().to_string().to_uppercase();
-            let address = format!("L1_{}", hex_uuid);
-
-            accounts.insert(name.to_string(), address.clone());
-
-            // Initialize each address with 1000 BB (10,000 BB for HOUSE)
-            let initial_balance = if name == "HOUSE" { 10000.0 } else { 1000.0 };
-            balances.insert(address, initial_balance);
-
-            println!("✅ Generated account: {} -> {}", name, accounts.get(name).unwrap());
+        // Use GodMode for deterministic account generation
+        let godmode = crate::godmode::GodMode::new();
+        
+        // Get deterministic account mappings from godmode
+        let account_mapping = godmode.get_account_mapping();
+        let initial_balances = godmode.get_initial_balances();
+        
+        // Copy mappings (name -> address) and balances (address -> balance)
+        for (name, address) in account_mapping {
+            accounts.insert(name.clone(), address.clone());
+            if let Some(&balance) = initial_balances.get(&address) {
+                balances.insert(address.clone(), balance);
+            }
+            println!("✅ Loaded account: {} -> {}", name, address);
         }
 
         Self {
