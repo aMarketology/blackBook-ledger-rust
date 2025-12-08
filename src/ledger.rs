@@ -2,6 +2,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use crate::markets::{MarketManager, Bet};
 use crate::escrow::EscrowManager;
+use crate::godmode::GodMode;
 
 /// Minimal blockchain ledger for BlackBook prediction market
 /// Each account is a real wallet with persistent balance
@@ -77,7 +78,7 @@ impl Ledger {
         let mut balances = HashMap::new();
 
         // Use GodMode for deterministic account generation
-        let godmode = crate::godmode::GodMode::new();
+        let godmode = GodMode::new();
         
         // Get deterministic account mappings from godmode
         let account_mapping = godmode.get_account_mapping();

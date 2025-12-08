@@ -17,6 +17,7 @@ mod markets;
 mod escrow;
 mod auth;
 mod cpmm;
+mod godmode;
 use ledger::Ledger;
 use hot_upgrades::{ProxyState, AuthorizedAccount, AuthorityLevel};
 use auth::{UserRegistry, SupabaseConfig, User, SignupRequest, LoginRequest, AuthResponse};
@@ -742,11 +743,11 @@ async fn main() {
         );
 
     // Bind to 0.0.0.0 for deployment (accepts external connections)
-    // Use environment variable PORT or default to 8080
+    // Use environment variable PORT or default to 1234
     let port = std::env::var("PORT")
-        .unwrap_or_else(|_| "8080".to_string())
+        .unwrap_or_else(|_| "1234".to_string())
         .parse::<u16>()
-        .unwrap_or(8080);
+        .unwrap_or(1234);
     let addr = SocketAddr::from(([0, 0, 0, 0], port));
     println!("🚀 BlackBook Prediction Market starting on http://0.0.0.0:{}", port);
     println!("");
@@ -1300,7 +1301,7 @@ async fn get_test_accounts(
     Json(json!({
         "success": true,
         "network": "BlackBook L1",
-        "rpc_url": format!("http://0.0.0.0:{}", std::env::var("PORT").unwrap_or_else(|_| "8080".to_string())),
+        "rpc_url": format!("http://0.0.0.0:{}", std::env::var("PORT").unwrap_or_else(|_| "1234".to_string())),
         "test_accounts": accounts,
         "total_accounts": accounts.len(),
         "note": "These are pre-funded test accounts for development. Connect any account to start trading."
