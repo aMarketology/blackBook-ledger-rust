@@ -1,0 +1,385 @@
+================================================================================
+       BLACKBOOK L1 ↔ L2 INTEGRATION IMPLEMENTATION PLAN
+================================================================================
+
+Created: December 7, 2025
+Status: Planning Phase
+L2 Server: Port 1234 (this codebase)
+L1 Server: Port 8080 (Railway/external)
+
+================================================================================
+                         CURRENT STATE ANALYSIS
+================================================================================
+
+✅ WHAT ALREADY EXISTS (L2):
+   • godmode.rs - Ed25519 signing/verification with deterministic test accounts
+   • SignedMessage struct - Basic signed message envelope
+   • Test accounts (ALICE, BOB, etc.) with L1_<pubkey> addresses
+   • Prediction markets with betting (no signature verification)
+   • CPMM engine for market pricing
+   • 10 godmode tests passing
+
+❌ WHAT'S MISSING (Gap from integration doc):
+   • src/l1_rpc_client.rs - HTTP client to call L1 blockchain
+   • src/signed_transaction.rs - Full transaction envelope with types
+   • src/bridge.rs - Cross-layer token bridge logic
+   • /rpc/* endpoints - L1 verification endpoints
+   • /bridge/* endpoints - Token bridging endpoints
+   • L1_RPC_URL environment variable support
+   • Signature-verified bet placement
+   • Settlement recording to L1
+
+⚠️  ADDRESS FORMAT MISMATCH:
+   • Current code uses: L1_<HEX_PUBKEY>
+   • Integration doc specifies: bb1_ (L1) and bb2_ (L2)
+   • Decision needed: Change format or support both?
+
+================================================================================
+                         PHASE 1: L1 RPC CLIENT
+================================================================================
+
+Priority: 🔴 HIGH (Foundation for all cross-layer communication)
+Estimated time: 1.5 hours
+Dependencies: None
+
+STEP 1.1: Create src/l1_rpc_client.rs
+─────────────────────────────────────
+□ Create L1RpcClient struct:
+  - endpoint_url: String (from L1_RPC_URL env var)
+  - timeout: Duration (default 30 seconds)
+  - mock_mode: bool (true when L1_RPC_URL not set)
+
+□ Implement core methods:
+  - new() -> Self
+  - new_from_env() -> Self (reads L1_RPC_URL)
+  - is_connected() -> bool
+
+STEP 1.2: Implement verify_signature()
+──────────────────────────────────────
+□ Method signature:
+  pub async fn verify_signature(
+      &self,
+      pubkey: &str,
+      message: &[u8],
+      signature: &str
+  ) -> Result<bool, L1RpcError>
+
+□ In mock mode: Use local Ed25519 verification (godmode)
+□ In live mode: POST to L1's /rpc/verify-l1-signature
+
+STEP 1.3: Implement get_balance()
+─────────────────────────────────
+□ Method signature:
+  pub async fn get_balance(&self, address: &str) -> Result<f64, L1RpcError>
+
+□ In mock mode: Return local ledger balance
+□ In live mode: GET L1's /rpc/account/{address}
+
+STEP 1.4: Implement get_nonce()
+───────────────────────────────
+□ Method signature:
+  pub async fn get_nonce(&self, address: &str) -> Result<u64, L1RpcError>
+
+□ In mock mode: Return 0 (or track locally)
+□ In live mode: GET L1's /rpc/nonce/{address}
+
+STEP 1.5: Add to lib.rs and main.rs
+───────────────────────────────────
+□ Add pub mod l1_rpc_client to lib.rs
+□ Add mod l1_rpc_client to main.rs
+□ Export L1RpcClient in lib.rs
+
+STEP 1.6: Add environment variable support
+──────────────────────────────────────────
+□ Read L1_RPC_URL from environment
+□ Log connection status on startup:
+  - "🔗 L1 RPC: Connected to {url}"
+  - "⚠️  L1 RPC: Mock mode (L1_RPC_URL not set)"
+
+STEP 1.7: Write tests
+─────────────────────
+□ test_mock_mode_verification()
+□ test_mock_mode_balance()
+□ test_rpc_client_creation()
+
+================================================================================
+                    PHASE 2: SIGNED TRANSACTION SUPPORT
+================================================================================
+
+Priority: 🔴 HIGH (Required for secure transactions)
+Estimated time: 1 hour
+Dependencies: Phase 1 (for verification)
+
+STEP 2.1: Create src/signed_transaction.rs
+──────────────────────────────────────────
+□ Create SignedTxType enum:
+  - Transfer = 0
+  - Bridge = 4
+  - BetPlacement = 7
+  - BetResolution = 8
+  - MarketLaunch = 9
+  - AddLiquidity = 10
+  - RemoveLiquidity = 11
+
+□ Create TransactionPayload enum:
+  - Transfer { to: String, amount: f64 }
+  - Bridge { target_layer: String, target_address: String, amount: f64 }
+  - BetPlacement { market_id: String, outcome: usize, amount: f64 }
+  - BetResolution { market_id: String, winning_outcome: usize }
+  - MarketLaunch { event_id: String, liquidity: f64 }
+
+STEP 2.2: Create SignedTransaction struct
+─────────────────────────────────────────
+□ Fields:
+  - sender_pubkey: String (64 hex chars)
+  - sender_address: String (L1_... format)
+  - nonce: u64
+  - timestamp: u64
+  - tx_type: SignedTxType
+  - payload: TransactionPayload
+  - signature: String (128 hex chars)
+
+□ Methods:
+  - new() - Create and sign transaction
+  - verify() - Verify signature locally
+  - verify_with_l1() - Verify via L1 RPC
+  - is_expired() - Check timestamp (5 minute window)
+  - to_signing_bytes() - Canonical bytes for signing
+
+STEP 2.3: Add to lib.rs and main.rs
+───────────────────────────────────
+□ Add pub mod signed_transaction to lib.rs
+□ Add mod signed_transaction to main.rs
+□ Export SignedTransaction, SignedTxType, TransactionPayload
+
+STEP 2.4: Write tests
+─────────────────────
+□ test_create_and_verify_transaction()
+□ test_transaction_expiry()
+□ test_different_tx_types()
+□ test_invalid_signature_rejected()
+
+================================================================================
+                     PHASE 3: BRIDGE ENDPOINTS
+================================================================================
+
+Priority: 🟡 MEDIUM (Required for L1↔L2 token movement)
+Estimated time: 1.5 hours
+Dependencies: Phase 1, Phase 2
+
+STEP 3.1: Create src/bridge.rs
+──────────────────────────────
+□ Create BridgeStatus enum:
+  - Pending
+  - Confirmed
+  - Completed
+  - Failed
+
+□ Create PendingBridge struct:
+  - bridge_id: String
+  - from_layer: String
+  - to_layer: String
+  - from_address: String
+  - to_address: String
+  - amount: f64
+  - status: BridgeStatus
+  - created_at: u64
+  - completed_at: Option<u64>
+  - l1_tx_hash: Option<String>
+
+□ Create BridgeManager struct:
+  - pending_bridges: HashMap<String, PendingBridge>
+  - Methods: initiate(), complete(), get_status(), list_pending()
+
+STEP 3.2: Add POST /bridge/complete endpoint
+────────────────────────────────────────────
+□ L1 calls this when bridge L1→L2 is confirmed
+□ Request body:
+  {
+    "bridge_id": "...",
+    "from_address": "bb1_...",
+    "to_address": "bb2_...",
+    "amount": 100.0,
+    "l1_tx_hash": "...",
+    "l1_slot": 12345
+  }
+□ Handler:
+  - Validate bridge_id exists in pending
+  - Mint tokens to to_address on L2 ledger
+  - Mark bridge as Completed
+  - Return { success: true, l2_balance: new_balance }
+
+STEP 3.3: Add POST /rpc/bridge endpoint
+───────────────────────────────────────
+□ User initiates bridge L2→L1
+□ Request body: SignedTransaction with Bridge payload
+□ Handler:
+  - Verify signature
+  - Check L2 balance >= amount
+  - Lock tokens on L2 (deduct from balance)
+  - Create PendingBridge record
+  - Forward to L1 (or queue for L1 processing)
+  - Return { bridge_id, status: "pending" }
+
+STEP 3.4: Add GET /rpc/bridge/:id endpoint
+──────────────────────────────────────────
+□ Check status of a bridge
+□ Return PendingBridge details
+
+STEP 3.5: Add to AppState
+─────────────────────────
+□ Add bridge_manager: BridgeManager to AppState
+□ Initialize on startup
+
+STEP 3.6: Add to lib.rs and main.rs
+───────────────────────────────────
+□ Add pub mod bridge to lib.rs
+□ Add mod bridge to main.rs
+□ Export BridgeManager, PendingBridge, BridgeStatus
+
+================================================================================
+                    PHASE 4: SIGNATURE-VERIFIED BETS
+================================================================================
+
+Priority: 🟡 MEDIUM (Secure bet placement)
+Estimated time: 1 hour
+Dependencies: Phase 1, Phase 2
+
+STEP 4.1: Create POST /bet/signed endpoint
+──────────────────────────────────────────
+□ Accept SignedTransaction with BetPlacement payload
+□ Handler:
+  - Verify signature locally (or via L1 if configured)
+  - Verify nonce (prevent replay)
+  - Check timestamp not expired
+  - Extract market_id, outcome, amount from payload
+  - Process bet using existing logic
+  - Return bet_id and confirmation
+
+STEP 4.2: Add nonce tracking to AppState
+────────────────────────────────────────
+□ Add nonces: HashMap<String, u64> to AppState
+□ On each signed transaction:
+  - Check nonce > stored nonce
+  - Update stored nonce after success
+
+STEP 4.3: Update existing /bet endpoint
+───────────────────────────────────────
+□ Keep existing endpoint for backwards compatibility
+□ Add optional "signature" field to BetRequest
+□ If signature provided, verify before processing
+
+STEP 4.4: Add POST /rpc/verify endpoint (local)
+───────────────────────────────────────────────
+□ Verify signatures locally (for testing/L2-only mode)
+□ Request: { pubkey, message, signature }
+□ Response: { valid: bool, error?: string }
+
+================================================================================
+                    PHASE 5: SETTLEMENT RECORDING
+================================================================================
+
+Priority: 🟢 LOWER (Audit trail on L1)
+Estimated time: 45 minutes
+Dependencies: Phase 1
+
+STEP 5.1: Update market resolution flow
+───────────────────────────────────────
+□ After resolving a market on L2:
+  - Call L1's POST /rpc/settlement
+  - Record L1 tx_hash in market metadata
+  - Log settlement confirmation
+
+STEP 5.2: Create settlement recording function
+──────────────────────────────────────────────
+□ In l1_rpc_client.rs:
+  pub async fn record_settlement(
+      &self,
+      market_id: &str,
+      outcome: usize,
+      winners: Vec<(String, f64)>  // (address, payout)
+  ) -> Result<SettlementResponse, L1RpcError>
+
+□ In mock mode: Just log and return success
+□ In live mode: POST to L1's /rpc/settlement
+
+STEP 5.3: Modify resolve endpoint
+─────────────────────────────────
+□ After successful resolution:
+  - Call record_settlement()
+  - Include L1 tx_hash in response
+
+================================================================================
+                         IMPLEMENTATION ORDER
+================================================================================
+
+Day 1: Foundation
+─────────────────
+□ 1.1-1.7: Create l1_rpc_client.rs with mock mode
+□ 2.1-2.4: Create signed_transaction.rs
+
+Day 2: Bridge & Integration
+───────────────────────────
+□ 3.1-3.6: Create bridge.rs and endpoints
+□ 4.1-4.4: Add signature-verified bet placement
+
+Day 3: Polish & Testing
+───────────────────────
+□ 5.1-5.3: Add settlement recording
+□ Integration tests
+□ Update layer2integration.md with actual status
+
+================================================================================
+                         ENVIRONMENT VARIABLES
+================================================================================
+
+Required for L1 connection:
+───────────────────────────
+L1_RPC_URL=https://your-l1-node.railway.app    # L1 blockchain URL
+JWT_SECRET=your_256_bit_secret                  # Shared auth secret
+
+Optional configuration:
+───────────────────────
+PORT=1234                    # L2 server port (default: 1234)
+GODMODE_ENABLED=true         # Enable test accounts (default: true)
+L1_VERIFY_BETS=false         # Require L1 verification for bets (default: false)
+BRIDGE_TIMEOUT_SECS=300      # Bridge confirmation timeout (default: 300)
+
+================================================================================
+                         SUCCESS CRITERIA
+================================================================================
+
+Phase 1 Complete When:
+□ L1RpcClient can be created with/without L1_RPC_URL
+□ Mock mode verification works with godmode accounts
+□ All tests pass
+
+Phase 2 Complete When:
+□ SignedTransaction can be created and verified
+□ All transaction types serialize/deserialize correctly
+□ Expiry checking works
+
+Phase 3 Complete When:
+□ /bridge/complete endpoint works
+□ /rpc/bridge endpoint creates pending bridges
+□ Bridge status can be queried
+
+Phase 4 Complete When:
+□ /bet/signed endpoint accepts signed transactions
+□ Nonce replay protection works
+□ Invalid signatures are rejected
+
+Phase 5 Complete When:
+□ Market resolution records to L1 (or logs in mock mode)
+□ Settlement confirmation is stored
+
+================================================================================
+                              NOTES
+================================================================================
+
+• All phases can be tested with mock mode (no real L1 required)
+• Address format decision pending: L1_/L2_ vs bb1_/bb2_
+• Existing endpoints remain backwards compatible
+• L1 verification is optional initially (L1_VERIFY_BETS=false)
+
+================================================================================

@@ -18,10 +18,15 @@ mod escrow;
 mod auth;
 mod cpmm;
 mod godmode;
+mod l1_rpc_client;
+mod signed_transaction;
+mod bridge;
 use ledger::Ledger;
 use hot_upgrades::{ProxyState, AuthorizedAccount, AuthorityLevel};
 use auth::{UserRegistry, SupabaseConfig, User, SignupRequest, LoginRequest, AuthResponse};
 use cpmm::PendingEvent;
+use l1_rpc_client::L1RpcClient;
+use bridge::{BridgeManager, BridgeRequest, BridgeCompleteRequest, BridgeCompleteResponse, BridgeResponse, BridgeStatusResponse};
 
 // Individual bet record for tracking outcomes and payouts
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -321,6 +326,11 @@ pub struct AppState {
     pub pending_events: HashMap<String, PendingEvent>,  // NEW: Pending events inbox
     pub market_activities: Vec<MarketActivity>,  // Track all prediction market activities
     pub blockchain_activities: Vec<BlockchainActivity>,  // Real-time blockchain activity feed
+    pub bridge_manager: BridgeManager,  // Bridge manager for L1↔L2 token movement
+    pub nonces: HashMap<String, u64>,   // Nonce tracking for replay protection (address -> last nonce)
+    pub supabase_users: HashMap<String, User>,  // Supabase user_id -> User mapping
+    pub wallet_to_user: HashMap<String, String>,  // wallet_address -> user_id mapping
+    pub supabase_config: Option<SupabaseConfig>,  // Supabase config (if available)
 }
 
 impl AppState {
@@ -340,6 +350,11 @@ impl AppState {
             pending_events: HashMap::new(),  // NEW: Initialize empty pending events inbox
             market_activities: Vec::new(),
             blockchain_activities: Vec::new(),
+            bridge_manager: BridgeManager::new(),  // Initialize bridge manager
+            nonces: HashMap::new(),  // Initialize empty nonces for replay protection
+            supabase_users: HashMap::new(),  // Initialize empty Supabase user registry
+            wallet_to_user: HashMap::new(),  // Initialize wallet->user mapping
+            supabase_config: SupabaseConfig::from_env().ok(),  // Load Supabase config if available
         };
 
         // The ledger now has 8 real accounts with L1_ wallet addresses
@@ -550,6 +565,42 @@ struct BetRequest {
     amount: f64,
 }
 
+// Signed Bet Request - for cryptographically verified bets
+#[derive(Debug, Deserialize)]
+struct SignedBetRequest {
+    /// The signed transaction containing BetPlacement payload
+    signed_tx: signed_transaction::SignedTransaction,
+}
+
+// Signed Bet Response
+#[derive(Debug, Serialize)]
+struct SignedBetResponse {
+    success: bool,
+    bet_id: Option<String>,
+    transaction_id: Option<String>,
+    market_id: Option<String>,
+    outcome: Option<usize>,
+    amount: Option<f64>,
+    new_balance: Option<f64>,
+    nonce_used: Option<u64>,
+    error: Option<String>,
+}
+
+// Local signature verification request
+#[derive(Debug, Deserialize)]
+struct VerifySignatureRequest {
+    pubkey: String,
+    message: String,  // hex-encoded message bytes
+    signature: String,
+}
+
+// Local signature verification response  
+#[derive(Debug, Serialize)]
+struct VerifySignatureResponse {
+    valid: bool,
+    error: Option<String>,
+}
+
 // General Wager Request - for casino games, blackjack, peer-to-peer bets
 #[derive(Debug, Deserialize)]
 struct WagerRequest {
@@ -670,6 +721,11 @@ async fn main() {
         .route("/wallet/test-accounts", get(get_test_accounts))
         .route("/wallet/account-info/:account_name", get(get_account_info))
         
+        // Supabase User Authentication (wallet registered on L1, login on L2)
+        .route("/auth/login", post(login_with_jwt))             // Login with Supabase JWT → get L1 wallet info
+        .route("/auth/user", get(get_authenticated_user))       // Get user info from JWT
+        .route("/bet/auth", post(place_authenticated_bet))      // Place bet with JWT auth
+        
         // Debug endpoint - list all balances
         .route("/debug/balances", get(debug_all_balances))
         
@@ -693,10 +749,15 @@ async fn main() {
         
         // Betting endpoints
         .route("/bet", post(place_bet))
+        .route("/bet/signed", post(place_signed_bet))  // Signature-verified bet placement
         .route("/resolve/:market_id/:winning_option", post(resolve_market))
         .route("/bets/:account", get(get_user_bets))  // Get all bets for an account
         .route("/markets/:id/bets", get(get_market_bets))  // Get all bets for a market
         .route("/markets/:id/stats", get(get_market_stats))  // Get detailed market statistics
+        
+        // RPC endpoints (signature verification, nonce)
+        .route("/rpc/verify", post(verify_signature_local))  // Local signature verification
+        .route("/rpc/nonce/:address", get(get_nonce))  // Get nonce for address
         
         // Casino & General Wager endpoints (for blackjack, poker, etc.)
         .route("/wager", post(place_wager))
@@ -731,6 +792,13 @@ async fn main() {
         // Market Activity endpoints
         .route("/activities", get(get_market_activities))
         
+        // Bridge endpoints (L1↔L2 token movement)
+        .route("/bridge/complete", post(bridge_complete))       // L1 calls this when L1→L2 bridge confirmed
+        .route("/rpc/bridge", post(initiate_bridge))            // User initiates L2→L1 bridge
+        .route("/rpc/bridge/:bridge_id", get(get_bridge_status)) // Check bridge status
+        .route("/bridge/pending", get(list_pending_bridges))    // List all pending bridges
+        .route("/bridge/stats", get(get_bridge_stats))          // Bridge statistics
+        
         // Health check
         .route("/health", get(health_check))
         
@@ -749,6 +817,12 @@ async fn main() {
         .parse::<u16>()
         .unwrap_or(1234);
     let addr = SocketAddr::from(([0, 0, 0, 0], port));
+    
+    // Initialize L1 RPC Client and log connection status
+    let l1_client = L1RpcClient::from_env();
+    l1_client.log_status();
+    println!("");
+    
     println!("🚀 BlackBook Prediction Market starting on http://0.0.0.0:{}", port);
     println!("");
     println!("📚 HTTP REST API Endpoints (Port {}):", port);
@@ -777,6 +851,12 @@ async fn main() {
     println!("   GET  /ai/events/feed.rss - RSS feed of AI events");
     println!("   GET  /events/pending - List pending events (CPMM inbox)");
     println!("   POST /events/:id/launch - Launch pending event as market");
+    println!("   🌉 Bridge (L1↔L2):");
+    println!("   POST /bridge/complete - L1 calls when bridge L1→L2 confirmed");
+    println!("   POST /rpc/bridge - Initiate L2→L1 bridge (signed tx)");
+    println!("   GET  /rpc/bridge/:id - Check bridge status");
+    println!("   GET  /bridge/pending - List pending bridges");
+    println!("   GET  /bridge/stats - Bridge statistics");
     println!("");
     println!("🔌 IPC Commands (Tauri Desktop App - 27 Total):");
     println!("   📊 Account Management (3):");
@@ -857,6 +937,890 @@ async fn health_check() -> Json<Value> {
         "version": "1.0.0",
         "timestamp": chrono::Utc::now().to_rfc3339()
     }))
+}
+
+// ============================================================================
+// BRIDGE ENDPOINTS (L1↔L2 Token Movement)
+// ============================================================================
+
+/// POST /bridge/complete - L1 calls this when L1→L2 bridge is confirmed
+/// This mints tokens on L2 for the user
+async fn bridge_complete(
+    State(state): State<SharedState>,
+    Json(request): Json<BridgeCompleteRequest>,
+) -> Result<Json<BridgeCompleteResponse>, (StatusCode, Json<Value>)> {
+    let mut app_state = state.lock().unwrap();
+    
+    // Validate request
+    if request.amount <= 0.0 {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(json!({"error": "Invalid amount", "success": false}))
+        ));
+    }
+    
+    // Complete the bridge in bridge manager
+    let bridge_result = app_state.bridge_manager.complete_from_l1(&request);
+    
+    match bridge_result {
+        Ok(bridge) => {
+            // Mint tokens to the target address on L2
+            // First check if the address exists in our ledger, if not we may need to handle it
+            let target = &request.to_address;
+            
+            // For now, we'll try to credit the balance to the account
+            // In a real system, we'd need to resolve the L2 address to an account name
+            let new_balance = if let Some(account_name) = app_state.ledger.accounts.iter()
+                .find(|(_, addr)| *addr == target)
+                .map(|(name, _)| name.clone()) 
+            {
+                // Found the account, credit the balance
+                let current = app_state.ledger.get_balance(&account_name);
+                let _ = app_state.ledger.admin_set_balance(&account_name, current + request.amount);
+                Some(app_state.ledger.get_balance(&account_name))
+            } else {
+                // Account not found - in production we'd create it or reject
+                // For now, log and continue (bridge is recorded)
+                println!("⚠️  Bridge complete but target address {} not found in L2 ledger", target);
+                None
+            };
+            
+            // Track activity
+            app_state.track_activity(
+                "bridge_complete".to_string(),
+                None,
+                None,
+                Some(target.clone()),
+                Some(request.amount),
+                format!("Bridge {} completed: {} BB from L1 ({}) to L2 ({})", 
+                    bridge.bridge_id, request.amount, request.from_address, target),
+            );
+            
+            println!("✅ Bridge {} completed: {} BB minted to {}", 
+                bridge.bridge_id, request.amount, target);
+            
+            Ok(Json(BridgeCompleteResponse {
+                success: true,
+                bridge_id: bridge.bridge_id,
+                l2_balance: new_balance,
+                error: None,
+            }))
+        }
+        Err(e) => {
+            Err((
+                StatusCode::BAD_REQUEST,
+                Json(json!({
+                    "success": false,
+                    "error": e.to_string()
+                }))
+            ))
+        }
+    }
+}
+
+/// POST /rpc/bridge - User initiates L2→L1 bridge
+async fn initiate_bridge(
+    State(state): State<SharedState>,
+    Json(request): Json<BridgeRequest>,
+) -> Result<Json<BridgeResponse>, (StatusCode, Json<Value>)> {
+    let mut app_state = state.lock().unwrap();
+    
+    // Verify the signed transaction
+    match request.signed_tx.validate() {
+        Ok(_) => {}
+        Err(e) => {
+            return Err((
+                StatusCode::UNAUTHORIZED,
+                Json(json!({
+                    "success": false,
+                    "error": format!("Transaction validation failed: {}", e)
+                }))
+            ));
+        }
+    }
+    
+    // Extract bridge details from payload
+    let (target_layer, target_address, amount) = match &request.signed_tx.payload {
+        signed_transaction::TransactionPayload::Bridge { target_layer, target_address, amount } => {
+            (target_layer.clone(), target_address.clone(), *amount)
+        }
+        _ => {
+            return Err((
+                StatusCode::BAD_REQUEST,
+                Json(json!({
+                    "success": false,
+                    "error": "Invalid transaction payload type, expected Bridge"
+                }))
+            ));
+        }
+    };
+    
+    // Find the sender's account and check balance
+    let sender_address = &request.signed_tx.sender_address;
+    let account_name = app_state.ledger.accounts.iter()
+        .find(|(_, addr)| *addr == sender_address)
+        .map(|(name, _)| name.clone());
+    
+    let account_name = match account_name {
+        Some(name) => name,
+        None => {
+            return Err((
+                StatusCode::BAD_REQUEST,
+                Json(json!({
+                    "success": false,
+                    "error": format!("Sender address {} not found in L2 ledger", sender_address)
+                }))
+            ));
+        }
+    };
+    
+    // Check balance
+    let current_balance = app_state.ledger.get_balance(&account_name);
+    if current_balance < amount {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(json!({
+                "success": false,
+                "error": format!("Insufficient balance: have {} BB, need {} BB", current_balance, amount)
+            }))
+        ));
+    }
+    
+    // Lock tokens (deduct from balance)
+    let _ = app_state.ledger.admin_set_balance(&account_name, current_balance - amount);
+    
+    // Initiate the bridge
+    match app_state.bridge_manager.initiate(&request.signed_tx) {
+        Ok(bridge) => {
+            // Track activity
+            app_state.track_activity(
+                "bridge_initiated".to_string(),
+                None,
+                None,
+                Some(sender_address.clone()),
+                Some(amount),
+                format!("Bridge {} initiated: {} BB from L2 ({}) to {} ({})", 
+                    bridge.bridge_id, amount, sender_address, target_layer, target_address),
+            );
+            
+            println!("🌉 Bridge {} initiated: {} BB from {} to {} on {}", 
+                bridge.bridge_id, amount, sender_address, target_address, target_layer);
+            
+            Ok(Json(BridgeResponse {
+                success: true,
+                bridge_id: bridge.bridge_id,
+                amount,
+                from_layer: "L2".to_string(),
+                to_layer: target_layer,
+                from_address: sender_address.clone(),
+                to_address: target_address,
+                status: bridge.status,
+                estimated_completion_secs: 300, // 5 minutes
+                error: None,
+            }))
+        }
+        Err(e) => {
+            // Refund the locked tokens
+            let _ = app_state.ledger.admin_set_balance(&account_name, current_balance);
+            
+            Err((
+                StatusCode::BAD_REQUEST,
+                Json(json!({
+                    "success": false,
+                    "error": e.to_string()
+                }))
+            ))
+        }
+    }
+}
+
+/// GET /rpc/bridge/:bridge_id - Check bridge status
+async fn get_bridge_status(
+    State(state): State<SharedState>,
+    Path(bridge_id): Path<String>,
+) -> Json<BridgeStatusResponse> {
+    let app_state = state.lock().unwrap();
+    
+    match app_state.bridge_manager.get_status(&bridge_id) {
+        Some(bridge) => Json(BridgeStatusResponse {
+            found: true,
+            bridge: Some(bridge),
+            error: None,
+        }),
+        None => Json(BridgeStatusResponse {
+            found: false,
+            bridge: None,
+            error: Some(format!("Bridge {} not found", bridge_id)),
+        }),
+    }
+}
+
+/// GET /bridge/pending - List all pending bridges
+async fn list_pending_bridges(
+    State(state): State<SharedState>,
+) -> Json<Value> {
+    let app_state = state.lock().unwrap();
+    let pending = app_state.bridge_manager.list_pending();
+    
+    Json(json!({
+        "count": pending.len(),
+        "bridges": pending
+    }))
+}
+
+/// GET /bridge/stats - Get bridge statistics
+async fn get_bridge_stats(
+    State(state): State<SharedState>,
+) -> Json<Value> {
+    let app_state = state.lock().unwrap();
+    let stats = app_state.bridge_manager.stats();
+    
+    Json(json!({
+        "statistics": stats
+    }))
+}
+
+// ============================================================================
+// SIGNATURE-VERIFIED BET ENDPOINTS
+// ============================================================================
+
+/// POST /bet/signed - Place a bet with cryptographic signature verification
+/// 
+/// This endpoint accepts a SignedTransaction with BetPlacement payload.
+/// It verifies the signature, checks nonce for replay protection, and processes the bet.
+async fn place_signed_bet(
+    State(state): State<SharedState>,
+    Json(request): Json<SignedBetRequest>,
+) -> Result<Json<SignedBetResponse>, (StatusCode, Json<SignedBetResponse>)> {
+    let signed_tx = &request.signed_tx;
+    
+    // 1. Validate the transaction (signature + expiry)
+    if let Err(e) = signed_tx.validate() {
+        return Err((
+            StatusCode::UNAUTHORIZED,
+            Json(SignedBetResponse {
+                success: false,
+                bet_id: None,
+                transaction_id: None,
+                market_id: None,
+                outcome: None,
+                amount: None,
+                new_balance: None,
+                nonce_used: None,
+                error: Some(format!("Transaction validation failed: {}", e)),
+            })
+        ));
+    }
+    
+    // 2. Extract bet details from payload
+    let (market_id, outcome, amount) = match &signed_tx.payload {
+        signed_transaction::TransactionPayload::BetPlacement { market_id, outcome, amount } => {
+            (market_id.clone(), *outcome, *amount)
+        }
+        _ => {
+            return Err((
+                StatusCode::BAD_REQUEST,
+                Json(SignedBetResponse {
+                    success: false,
+                    bet_id: None,
+                    transaction_id: None,
+                    market_id: None,
+                    outcome: None,
+                    amount: None,
+                    new_balance: None,
+                    nonce_used: None,
+                    error: Some("Invalid transaction payload type, expected BetPlacement".into()),
+                })
+            ));
+        }
+    };
+    
+    let sender_address = &signed_tx.sender_address;
+    let nonce = signed_tx.nonce;
+    
+    // Lock state for the remaining operations
+    let mut app_state = state.lock().unwrap();
+    
+    // 3. Check nonce for replay protection
+    let last_nonce = app_state.nonces.get(sender_address).copied().unwrap_or(0);
+    if nonce <= last_nonce {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(SignedBetResponse {
+                success: false,
+                bet_id: None,
+                transaction_id: None,
+                market_id: Some(market_id),
+                outcome: Some(outcome),
+                amount: Some(amount),
+                new_balance: None,
+                nonce_used: None,
+                error: Some(format!("Nonce {} is not greater than last used nonce {}", nonce, last_nonce)),
+            })
+        ));
+    }
+    
+    // 4. Resolve sender address to account name
+    let account_name = app_state.ledger.accounts.iter()
+        .find(|(_, addr)| *addr == sender_address)
+        .map(|(name, _)| name.clone());
+    
+    let account_name = match account_name {
+        Some(name) => name,
+        None => {
+            return Err((
+                StatusCode::BAD_REQUEST,
+                Json(SignedBetResponse {
+                    success: false,
+                    bet_id: None,
+                    transaction_id: None,
+                    market_id: Some(market_id),
+                    outcome: Some(outcome),
+                    amount: Some(amount),
+                    new_balance: None,
+                    nonce_used: None,
+                    error: Some(format!("Sender address {} not found in ledger", sender_address)),
+                })
+            ));
+        }
+    };
+    
+    // 5. Check market exists and is not resolved
+    let (market_title, market_option, is_resolved, valid_option) = {
+        let market = match app_state.markets.get(&market_id) {
+            Some(m) => m,
+            None => {
+                return Err((
+                    StatusCode::NOT_FOUND,
+                    Json(SignedBetResponse {
+                        success: false,
+                        bet_id: None,
+                        transaction_id: None,
+                        market_id: Some(market_id),
+                        outcome: Some(outcome),
+                        amount: Some(amount),
+                        new_balance: None,
+                        nonce_used: None,
+                        error: Some("Market not found".into()),
+                    })
+                ));
+            }
+        };
+        
+        let valid_option = outcome < market.options.len();
+        let market_option = if valid_option { 
+            market.options[outcome].clone() 
+        } else { 
+            String::new() 
+        };
+        
+        (market.title.clone(), market_option, market.is_resolved, valid_option)
+    };
+    
+    if is_resolved {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(SignedBetResponse {
+                success: false,
+                bet_id: None,
+                transaction_id: None,
+                market_id: Some(market_id),
+                outcome: Some(outcome),
+                amount: Some(amount),
+                new_balance: None,
+                nonce_used: None,
+                error: Some("Market is already resolved".into()),
+            })
+        ));
+    }
+    
+    if !valid_option {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(SignedBetResponse {
+                success: false,
+                bet_id: None,
+                transaction_id: None,
+                market_id: Some(market_id),
+                outcome: Some(outcome),
+                amount: Some(amount),
+                new_balance: None,
+                nonce_used: None,
+                error: Some("Invalid outcome index".into()),
+            })
+        ));
+    }
+    
+    // 6. Place the bet
+    match app_state.ledger.place_bet(&account_name, &market_id, amount) {
+        Ok(tx_id) => {
+            // Update nonce AFTER successful bet
+            app_state.nonces.insert(sender_address.clone(), nonce);
+            
+            let new_balance = app_state.ledger.get_balance(&account_name);
+            
+            // Record the bet in the market
+            let bet_id = if let Some(market) = app_state.markets.get_mut(&market_id) {
+                let bid = market.record_bet(&account_name, amount, outcome);
+                
+                // Log to blockchain activity
+                app_state.log_blockchain_activity(
+                    "🔐",
+                    "SIGNED_BET_PLACED",
+                    &format!("{} placed signed bet {} BB on \"{}\" → {} | Nonce: {} | Balance: {} BB", 
+                        account_name, amount, market_title, market_option, nonce, new_balance)
+                );
+                
+                Some(bid)
+            } else {
+                None
+            };
+            
+            println!("✅ Signed bet placed: {} bet {} BB on {} (outcome {}) | Nonce: {}", 
+                account_name, amount, market_id, outcome, nonce);
+            
+            Ok(Json(SignedBetResponse {
+                success: true,
+                bet_id,
+                transaction_id: Some(tx_id),
+                market_id: Some(market_id),
+                outcome: Some(outcome),
+                amount: Some(amount),
+                new_balance: Some(new_balance),
+                nonce_used: Some(nonce),
+                error: None,
+            }))
+        }
+        Err(error) => {
+            Err((
+                StatusCode::BAD_REQUEST,
+                Json(SignedBetResponse {
+                    success: false,
+                    bet_id: None,
+                    transaction_id: None,
+                    market_id: Some(market_id),
+                    outcome: Some(outcome),
+                    amount: Some(amount),
+                    new_balance: None,
+                    nonce_used: None,
+                    error: Some(error),
+                })
+            ))
+        }
+    }
+}
+
+/// POST /rpc/verify - Verify a signature locally
+/// 
+/// This endpoint allows testing signature verification without placing a bet.
+async fn verify_signature_local(
+    Json(request): Json<VerifySignatureRequest>,
+) -> Json<VerifySignatureResponse> {
+    // Decode message from hex
+    let message_bytes = match hex::decode(&request.message) {
+        Ok(bytes) => bytes,
+        Err(e) => {
+            return Json(VerifySignatureResponse {
+                valid: false,
+                error: Some(format!("Invalid message hex: {}", e)),
+            });
+        }
+    };
+    
+    // Use L1RpcClient for local verification (mock mode)
+    let client = l1_rpc_client::L1RpcClient::new(None);
+    
+    match client.verify_signature_sync(&request.pubkey, &message_bytes, &request.signature) {
+        Ok(valid) => Json(VerifySignatureResponse {
+            valid,
+            error: None,
+        }),
+        Err(e) => Json(VerifySignatureResponse {
+            valid: false,
+            error: Some(e.to_string()),
+        }),
+    }
+}
+
+/// GET /rpc/nonce/:address - Get the current nonce for an address
+async fn get_nonce(
+    State(state): State<SharedState>,
+    Path(address): Path<String>,
+) -> Json<Value> {
+    let app_state = state.lock().unwrap();
+    let current_nonce = app_state.nonces.get(&address).copied().unwrap_or(0);
+    
+    Json(json!({
+        "address": address,
+        "current_nonce": current_nonce,
+        "next_valid_nonce": current_nonce + 1
+    }))
+}
+
+// ============================================================================
+// SUPABASE USER AUTHENTICATION
+// ============================================================================
+// Users register their wallet on L1, then login on L2 to access it.
+// Flow:
+//   1. User registers on L1 (creates wallet with Supabase account)
+//   2. User logs in via Supabase → Gets JWT token
+//   3. User calls /auth/login with JWT → L2 fetches wallet from L1
+//   4. User calls /bet/auth with JWT → L2 verifies and processes bet
+// ============================================================================
+
+/// Response after login
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LoginResponse {
+    pub success: bool,
+    pub user_id: Option<String>,
+    pub wallet_address: Option<String>,
+    pub balance: Option<f64>,
+    pub error: Option<String>,
+}
+
+/// Request to place a bet with JWT authentication
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AuthenticatedBetRequest {
+    pub market_id: String,
+    pub outcome: usize,
+    pub amount: f64,
+}
+
+/// Helper function to extract and verify Supabase JWT from Authorization header
+/// Returns the Supabase user_id if valid
+async fn verify_supabase_jwt(
+    headers: &HeaderMap,
+    supabase_config: &Option<SupabaseConfig>,
+) -> Result<String, String> {
+    // Get Authorization header
+    let auth_header = headers
+        .get("Authorization")
+        .ok_or("Missing Authorization header")?
+        .to_str()
+        .map_err(|_| "Invalid Authorization header")?;
+    
+    // Extract Bearer token
+    if !auth_header.starts_with("Bearer ") {
+        return Err("Authorization header must be 'Bearer <token>'".to_string());
+    }
+    let token = &auth_header[7..];
+    
+    // Verify with Supabase
+    let config = supabase_config
+        .as_ref()
+        .ok_or("Supabase not configured. Set NEXT_PUBLIC_SUPABASE_URL and NEXT_PUBLIC_SUPABASE_ANON_KEY")?;
+    
+    config.verify_token(token).await
+}
+
+/// Helper function to get wallet address from L1 by Supabase user_id
+/// This queries the L1 blockchain to find the wallet registered for this user
+async fn get_wallet_from_l1(user_id: &str) -> Result<(String, String, f64), String> {
+    // Query L1 for user's wallet
+    // L1 endpoint: GET /auth/wallet/:user_id
+    let l1_url = std::env::var("L1_RPC_URL").unwrap_or_else(|_| "http://localhost:8080".to_string());
+    
+    let client = reqwest::Client::new();
+    let response = client
+        .get(format!("{}/auth/wallet/{}", l1_url, user_id))
+        .send()
+        .await
+        .map_err(|e| format!("Failed to query L1: {}", e))?;
+    
+    if !response.status().is_success() {
+        return Err("User not registered on L1. Please register your wallet on the L1 blockchain first.".to_string());
+    }
+    
+    let data: serde_json::Value = response
+        .json()
+        .await
+        .map_err(|e| format!("Failed to parse L1 response: {}", e))?;
+    
+    let wallet_address = data["wallet_address"]
+        .as_str()
+        .ok_or("L1 response missing wallet_address")?
+        .to_string();
+    
+    let username = data["username"]
+        .as_str()
+        .unwrap_or("Unknown")
+        .to_string();
+    
+    let balance = data["balance"]
+        .as_f64()
+        .unwrap_or(0.0);
+    
+    Ok((wallet_address, username, balance))
+}
+
+/// POST /auth/login - Login with Supabase JWT and get wallet info from L1
+/// 
+/// The user must have already registered their wallet on L1.
+/// This endpoint verifies the JWT and fetches the user's L1 wallet.
+/// 
+/// Headers:
+///   Authorization: Bearer <supabase_jwt>
+/// 
+/// Response:
+///   { "success": true, "user_id": "...", "wallet_address": "L1_...", "balance": 1000.0 }
+async fn login_with_jwt(
+    State(state): State<SharedState>,
+    headers: HeaderMap,
+) -> Json<LoginResponse> {
+    // Get Supabase config from state
+    let supabase_config = {
+        let app_state = state.lock().unwrap();
+        app_state.supabase_config.clone()
+    };
+    
+    // Verify JWT and get user_id
+    let user_id = match verify_supabase_jwt(&headers, &supabase_config).await {
+        Ok(id) => id,
+        Err(e) => {
+            return Json(LoginResponse {
+                success: false,
+                user_id: None,
+                wallet_address: None,
+                balance: None,
+                error: Some(e),
+            });
+        }
+    };
+    
+    // Check if we already have this user cached locally
+    {
+        let app_state = state.lock().unwrap();
+        if let Some(user) = app_state.supabase_users.get(&user_id) {
+            let balance = app_state.ledger.get_balance(&user.wallet_address);
+            return Json(LoginResponse {
+                success: true,
+                user_id: Some(user_id),
+                wallet_address: Some(user.wallet_address.clone()),
+                balance: Some(balance),
+                error: None,
+            });
+        }
+    }
+    
+    // Query L1 for user's wallet
+    let (wallet_address, username, l1_balance) = match get_wallet_from_l1(&user_id).await {
+        Ok(data) => data,
+        Err(e) => {
+            return Json(LoginResponse {
+                success: false,
+                user_id: Some(user_id),
+                wallet_address: None,
+                balance: None,
+                error: Some(e),
+            });
+        }
+    };
+    
+    // Cache the user locally for future requests
+    let mut app_state = state.lock().unwrap();
+    
+    // Create user entry from L1 data
+    let user = User::new_test_account(username.clone(), wallet_address.clone());
+    app_state.wallet_to_user.insert(wallet_address.clone(), user_id.clone());
+    app_state.supabase_users.insert(user_id.clone(), user);
+    
+    // Check L2 balance (might differ from L1 after bridging)
+    let l2_balance = app_state.ledger.get_balance(&wallet_address);
+    
+    // Log the login
+    app_state.log_blockchain_activity(
+        "🔐",
+        "USER_LOGIN",
+        &format!("User {} logged in with wallet {} | L2 Balance: {} BB", 
+            username, wallet_address, l2_balance)
+    );
+    
+    Json(LoginResponse {
+        success: true,
+        user_id: Some(user_id),
+        wallet_address: Some(wallet_address),
+        balance: Some(l2_balance),
+        error: None,
+    })
+}
+
+/// GET /auth/user - Get authenticated user info from JWT
+/// 
+/// Headers:
+///   Authorization: Bearer <supabase_jwt>
+/// 
+/// Response:
+///   { "success": true, "user": { ... }, "balance": 100.0 }
+async fn get_authenticated_user(
+    State(state): State<SharedState>,
+    headers: HeaderMap,
+) -> Json<Value> {
+    // Get Supabase config from state
+    let supabase_config = {
+        let app_state = state.lock().unwrap();
+        app_state.supabase_config.clone()
+    };
+    
+    // Verify JWT and get user_id
+    let user_id = match verify_supabase_jwt(&headers, &supabase_config).await {
+        Ok(id) => id,
+        Err(e) => {
+            return Json(json!({
+                "success": false,
+                "error": e
+            }));
+        }
+    };
+    
+    let app_state = state.lock().unwrap();
+    
+    // Look up user
+    match app_state.supabase_users.get(&user_id) {
+        Some(user) => {
+            let balance = app_state.ledger.get_balance(&user.wallet_address);
+            Json(json!({
+                "success": true,
+                "user": {
+                    "id": user.id,
+                    "username": user.username,
+                    "wallet_address": user.wallet_address,
+                    "created_at": user.created_at,
+                    "is_test_account": user.is_test_account
+                },
+                "balance": balance,
+                "nonce": app_state.nonces.get(&user.wallet_address).copied().unwrap_or(0)
+            }))
+        },
+        None => {
+            // User not cached - they need to call /auth/login first
+            Json(json!({
+                "success": false,
+                "error": "Not logged in. Call POST /auth/login first to connect your L1 wallet.",
+                "user_id": user_id
+            }))
+        }
+    }
+}
+
+/// POST /bet/auth - Place a bet with JWT authentication
+/// 
+/// Headers:
+///   Authorization: Bearer <supabase_jwt>
+/// 
+/// Body:
+///   { "market_id": "...", "outcome": 0, "amount": 100.0 }
+/// 
+/// Response:
+///   { "success": true, "bet_id": "...", "new_balance": 900.0 }
+async fn place_authenticated_bet(
+    State(state): State<SharedState>,
+    headers: HeaderMap,
+    Json(payload): Json<AuthenticatedBetRequest>,
+) -> Json<Value> {
+    // Get Supabase config from state
+    let supabase_config = {
+        let app_state = state.lock().unwrap();
+        app_state.supabase_config.clone()
+    };
+    
+    // Verify JWT and get user_id
+    let user_id = match verify_supabase_jwt(&headers, &supabase_config).await {
+        Ok(id) => id,
+        Err(e) => {
+            return Json(json!({
+                "success": false,
+                "error": format!("Authentication failed: {}", e)
+            }));
+        }
+    };
+    
+    let mut app_state = state.lock().unwrap();
+    
+    // Look up user's wallet address
+    let wallet_address = match app_state.supabase_users.get(&user_id) {
+        Some(user) => user.wallet_address.clone(),
+        None => {
+            return Json(json!({
+                "success": false,
+                "error": "Not logged in. Call POST /auth/login first to connect your L1 wallet."
+            }));
+        }
+    };
+    
+    // Validate market exists and is open
+    let (market_title, option_text) = match app_state.markets.get(&payload.market_id) {
+        Some(market) => {
+            if market.is_resolved {
+                return Json(json!({
+                    "success": false,
+                    "error": "Market is already resolved"
+                }));
+            }
+            if payload.outcome >= market.options.len() {
+                return Json(json!({
+                    "success": false,
+                    "error": format!("Invalid outcome index. Market has {} options", market.options.len())
+                }));
+            }
+            (market.title.clone(), market.options[payload.outcome].clone())
+        },
+        None => {
+            return Json(json!({
+                "success": false,
+                "error": "Market not found"
+            }));
+        }
+    };
+    
+    // Check balance
+    let current_balance = app_state.ledger.get_balance(&wallet_address);
+    if current_balance < payload.amount {
+        return Json(json!({
+            "success": false,
+            "error": format!("Insufficient balance. Have: {} BB, Need: {} BB", current_balance, payload.amount)
+        }));
+    }
+    
+    // Place the bet
+    match app_state.ledger.place_bet(&wallet_address, &payload.market_id, payload.amount) {
+        Ok(tx_id) => {
+            // Record bet in market
+            let bet_id = if let Some(market) = app_state.markets.get_mut(&payload.market_id) {
+                market.record_bet(&wallet_address, payload.amount, payload.outcome)
+            } else {
+                tx_id.clone()
+            };
+            
+            let new_balance = app_state.ledger.get_balance(&wallet_address);
+            
+            // Log the bet
+            app_state.log_blockchain_activity(
+                "🎯",
+                "AUTH_BET",
+                &format!("{} bet {} BB on \"{}\" → {} | Balance: {} BB", 
+                    wallet_address, payload.amount, market_title, option_text, new_balance)
+            );
+            
+            Json(json!({
+                "success": true,
+                "bet_id": bet_id,
+                "transaction_id": tx_id,
+                "market_id": payload.market_id,
+                "market_title": market_title,
+                "outcome": payload.outcome,
+                "outcome_text": option_text,
+                "amount": payload.amount,
+                "new_balance": new_balance,
+                "wallet_address": wallet_address
+            }))
+        },
+        Err(e) => {
+            Json(json!({
+                "success": false,
+                "error": format!("Failed to place bet: {}", e)
+            }))
+        }
+    }
 }
 
 // Live Blockchain Activity Feed endpoint
