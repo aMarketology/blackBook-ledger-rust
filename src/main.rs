@@ -14,7 +14,7 @@ use uuid::Uuid;
 mod market_resolve;
 mod hot_upgrades;
 mod auth;
-mod godmode;
+mod easteregg;
 mod l1_rpc_client;
 mod bridge;
 
@@ -25,7 +25,7 @@ mod rss;
 mod rpc;
 
 use market_resolve::{Ledger, cpmm, cpmm::PendingEvent};
-use rss::{RssEvent, ResolutionRules};
+use rss::{RssEvent, ResolutionRules, write_rss_event_to_file};
 use rpc::{SignedTransaction, L1BlackBookRpc};
 use hot_upgrades::{ProxyState, AuthorizedAccount, AuthorityLevel};
 use auth::{UserRegistry, SupabaseConfig, User, SignupRequest, LoginRequest, AuthResponse};
@@ -786,6 +786,7 @@ async fn main() {
         
         // AI Event Creation endpoints
         .route("/ai/events", post(create_ai_event))
+        .route("/ai/events", get(get_ai_events))
         .route("/ai/events/recent", get(get_recent_ai_events))
         .route("/ai/events/feed.rss", get(get_ai_events_rss))
         
@@ -4126,122 +4127,150 @@ async fn validate_code(
 /// POST /ai/events - Accept AI-generated events and add to RSS feed + ledger if confidence > 0.555
 async fn create_ai_event(
     State(state): State<SharedState>,
-    Json(payload): Json<AiEventRequest>,
+    Json(mut payload): Json<RssEvent>,
 ) -> Result<Json<Value>, StatusCode> {
     let mut app_state = state.lock().unwrap();
     
-    // Validate the event data
-    if payload.event.title.is_empty() || payload.event.options.len() < 2 {
+    // Validate the event data using RssEvent's validate method
+    if let Err(e) = payload.validate() {
         return Ok(Json(json!({
             "success": false,
-            "error": "Event must have a title and at least 2 options"
+            "error": e
         })));
     }
     
-    if payload.event.confidence < 0.0 || payload.event.confidence > 1.0 {
+    // Generate content hash for deduplication (SHA-256 of title + source_url)
+    let content_hash = payload.generate_content_hash();
+    
+    // Check if event already exists using content hash
+    if let Some(existing_market) = app_state.markets.values().find(|m| m.id == content_hash) {
+        // Event already exists - return existing market_id (idempotent)
+        app_state.log_blockchain_activity(
+            "♻️",
+            "DUPLICATE_EVENT",
+            &format!("Duplicate event detected: {} | Existing Market: {}", 
+                payload.title, content_hash)
+        );
+        
         return Ok(Json(json!({
-            "success": false,
-            "error": "Confidence must be between 0.0 and 1.0"
+            "success": true,
+            "market_id": content_hash,
+            "added_to_ledger": true,
+            "duplicate": true,
+            "message": "Event already exists - returning existing market_id"
         })));
     }
     
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap()
-        .as_secs();
+    // Assign market_id using content hash
+    payload.market_id = content_hash.clone();
+    payload.added_to_ledger = true;
     
-    let event_id = format!("ai_event_{}", Uuid::new_v4().simple());
-    let mut market_id: Option<String> = None;
-    let mut added_to_ledger = false;
+    let category = payload.get_category();
+    let probabilities = payload.get_probabilities();
     
-    // If confidence > 0.555, create a prediction market
-    if payload.event.confidence > 0.555 {
-        let market_id_str = format!("ai_market_{}", Uuid::new_v4().simple());
-        
-        let market = PredictionMarket::new(
-            market_id_str.clone(),
-            payload.event.title.clone(),
-            payload.event.description.clone(),
-            payload.event.category.clone(),
-            payload.event.options.clone(),
-        );
-        
-        app_state.markets.insert(market_id_str.clone(), market);
-        market_id = Some(market_id_str.clone());
-        added_to_ledger = true;
-        
-        // Track activity
-        app_state.track_activity(
-            "ai_event_added".to_string(),
-            Some(market_id_str.clone()),
-            Some(payload.event.title.clone()),
-            Some(format!("AI Agent: {}", payload.source.domain)),
-            None,
-            format!("AI-generated market created with {:.1}% confidence from {}", 
-                payload.event.confidence * 100.0, payload.source.domain),
-        );
-        
-        // Log to blockchain activity feed (visible at /ledger/json)
-        app_state.log_blockchain_activity(
-            "🤖",
-            "AI_EVENT_CREATED",
-            &format!("AI Agent → {} | Confidence: {:.1}% | Category: {} | Market: {} | Source: {}", 
-                payload.event.title, 
-                payload.event.confidence * 100.0,
-                payload.event.category,
-                market_id_str,
-                payload.source.domain)
-        );
-        
-        println!("🤖 AI Event added to ledger: {} (confidence: {:.2})", 
-            payload.event.title, payload.event.confidence);
-    } else {
-        // Log RSS-only event to blockchain activity feed
-        app_state.log_blockchain_activity(
-            "📋",
-            "AI_EVENT_RSS_ONLY",
-            &format!("AI Agent → {} | Confidence: {:.1}% (below 55.5% threshold) | Category: {} | Source: {}", 
-                payload.event.title, 
-                payload.event.confidence * 100.0,
-                payload.event.category,
-                payload.source.domain)
-        );
-        
-        println!("📋 AI Event added to RSS only: {} (confidence: {:.2} - below 0.555 threshold)", 
-            payload.event.title, payload.event.confidence);
+    // Create prediction market
+    let market = PredictionMarket::new(
+        content_hash.clone(),
+        payload.title.clone(),
+        payload.description.clone(),
+        category.clone(),
+        payload.outcomes.clone(),
+    );
+    
+    app_state.markets.insert(content_hash.clone(), market);
+    
+    // Persist event to RSS file in rss/ folder
+    let rss_dir = "rss";
+    match write_rss_event_to_file(&payload, rss_dir) {
+        Ok(filename) => {
+            println!("💾 RSS event saved to: {}", filename);
+        },
+        Err(e) => {
+            eprintln!("⚠️  Failed to save RSS file: {}", e);
+        }
     }
     
-    // Create the AI event
-    let ai_event = AiEvent {
-        id: event_id.clone(),
-        source: payload.source.clone(),
-        event: payload.event.clone(),
-        created_at: now,
-        added_to_ledger,
-        market_id: market_id.clone(),
-    };
+    // Track activity
+    let source = payload.source.clone().unwrap_or_else(|| "Unknown".to_string());
+    app_state.track_activity(
+        "rss_event_added".to_string(),
+        Some(content_hash.clone()),
+        Some(payload.title.clone()),
+        Some(format!("Source: {}", source)),
+        None,
+        format!("RSS event created | Category: {} | Outcomes: {}", 
+            category, payload.outcomes.len()),
+    );
     
-    // Add to AI events list (for RSS feed)
-    app_state.ai_events.push(ai_event);
+    // Log to blockchain activity feed with 📡 emoji for RSS events
+    app_state.log_blockchain_activity(
+        "📡",
+        "EVENT_RECEIVED",
+        &format!("📥 New Event: {} | Category: {} | ID: {} | Source: {}", 
+            payload.title, 
+            category,
+            &content_hash[..12], // First 12 chars of hash
+            source)
+    );
     
-    // Write to RSS file
-    if let Err(e) = update_rss_feed(&app_state.ai_events) {
-        eprintln!("⚠️  Failed to update RSS feed: {}", e);
-    }
+    println!("📡 RSS Event received: {} | Market ID: {}", 
+        payload.title, &content_hash[..12]);
     
     Ok(Json(json!({
         "success": true,
-        "event_id": event_id,
-        "added_to_ledger": added_to_ledger,
-        "market_id": market_id,
-        "confidence": payload.event.confidence,
-        "threshold": 0.555,
-        "message": if added_to_ledger {
-            "Event added to RSS feed and created as prediction market"
-        } else {
-            "Event added to RSS feed only (confidence below threshold)"
-        }
+        "market_id": content_hash,
+        "added_to_ledger": true,
+        "category": category,
+        "probabilities": probabilities,
+        "message": "Event successfully added as prediction market"
     })))
+}
+
+/// GET /ai/events - Get all active markets for frontend display
+/// Returns live betting events that are currently active on the chain
+async fn get_ai_events(
+    State(state): State<SharedState>,
+) -> Json<Value> {
+    let app_state = state.lock().unwrap();
+    
+    // Get all active markets (not resolved)
+    let active_markets: Vec<_> = app_state.markets
+        .values()
+        .filter(|m| !m.is_resolved)
+        .map(|m| {
+            // Calculate current probabilities from betting volume
+            let mut probabilities = Vec::new();
+            for opt_stat in &m.option_stats {
+                let prob = if m.total_volume > 0.0 {
+                    opt_stat.total_volume / m.total_volume
+                } else {
+                    1.0 / m.options.len() as f64
+                };
+                probabilities.push(prob);
+            }
+            
+            json!({
+                "market_id": m.id,
+                "title": m.title,
+                "description": m.description,
+                "category": m.category,
+                "outcomes": m.options,
+                "probabilities": probabilities,
+                "total_volume": m.total_volume,
+                "unique_bettors": m.unique_bettors.len(),
+                "bet_count": m.bet_count,
+                "is_resolved": m.is_resolved,
+                "on_leaderboard": m.on_leaderboard,
+            })
+        })
+        .collect();
+    
+    Json(json!({
+        "success": true,
+        "count": active_markets.len(),
+        "markets": active_markets,
+        "description": "Active prediction markets available for betting"
+    }))
 }
 
 /// GET /ai/events/recent - Get recent AI events

@@ -599,7 +599,7 @@ fn now_timestamp() -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::godmode::GodMode;
+    use crate::easteregg::GodMode;
 
     fn create_bridge_tx(godmode: &GodMode, account: &str, target: &str, amount: f64) -> SignedTransaction {
         let payload = TransactionPayload::Bridge {

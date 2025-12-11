@@ -10,6 +10,29 @@
 
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use sha2::{Sha256, Digest};
+use hex;
+use std::fs;
+use std::path::Path;
+
+// ============================================================================
+// EVENT DATES
+// ============================================================================
+
+/// Flexible date structure for events
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EventDates {
+    /// Publication date (required) - ISO8601
+    pub published: String,
+    
+    /// When betting freezes (optional) - ISO8601
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub freeze: Option<String>,
+    
+    /// When market resolves (optional) - ISO8601
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub resolution: Option<String>,
+}
 
 // ============================================================================
 // RESOLUTION RULES
@@ -19,37 +42,44 @@ use std::collections::HashMap;
 /// Defines objective conditions for resolving each outcome
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct ResolutionRules {
-    /// Whether resolution rules are provided
-    pub optional: bool,
+    /// Optional resolution provider (e.g., "CoinGecko", "Manual")
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub provider: Option<String>,
+    
+    /// Optional data source URL for automated resolution
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub data_source: Option<String>,
     
     /// Map of outcome name → resolution condition
     /// e.g., { "YES": "BTC price > $100k on Jan 1, 2025" }
-    pub rules: HashMap<String, String>,
+    pub conditions: HashMap<String, String>,
 }
 
 impl ResolutionRules {
     /// Create new resolution rules
-    pub fn new(rules: HashMap<String, String>) -> Self {
+    pub fn new(conditions: HashMap<String, String>) -> Self {
         Self {
-            optional: false,
-            rules,
+            provider: None,
+            data_source: None,
+            conditions,
         }
     }
     
-    /// Create empty/optional resolution rules
+    /// Create empty resolution rules
     pub fn empty() -> Self {
         Self {
-            optional: true,
-            rules: HashMap::new(),
+            provider: None,
+            data_source: None,
+            conditions: HashMap::new(),
         }
     }
     
     /// Check if rules are defined for all outcomes
     pub fn has_rules_for(&self, outcomes: &[String]) -> bool {
-        if self.optional {
-            return true;
+        if self.conditions.is_empty() {
+            return false;
         }
-        outcomes.iter().all(|o| self.rules.contains_key(o))
+        outcomes.iter().all(|o| self.conditions.contains_key(o))
     }
 }
 
@@ -59,53 +89,61 @@ impl ResolutionRules {
 
 /// RSS Event payload for initializing a prediction market
 /// 
-/// This is the format received from the RSS feed and used to create
-/// a new market on-chain with initial liquidity and CPMM pool.
+/// Flexible structure where scrapers send minimal data and L2 enriches with defaults.
+/// Required: title, description, outcomes, source_url, dates.published
+/// Optional: source, category, tags, initial_probabilities, image_url, resolution_rules
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RssEvent {
-    /// Unique market ID (from RSS guid or hash)
-    pub market_id: String,
+    /// Market title (required)
+    pub title: String,
     
-    /// Market title for display
-    pub meta_title: String,
+    /// Market description (required)
+    pub description: String,
     
-    /// Market description
-    pub meta_description: String,
+    /// Source identifier (optional) - e.g., "AI_Scraper_v1"
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub source: Option<String>,
     
-    /// Market type: "binary", "three_choice", "multi"
+    /// Category (optional) - e.g., "crypto", "sports", "politics"
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub category: Option<String>,
+    
+    /// Tags for filtering (optional)
+    #[serde(default)]
+    pub tags: Vec<String>,
+    
+    /// Market type: "binary", "three_choice", "multi" (default: "three_choice")
     #[serde(default = "default_market_type")]
     pub market_type: String,
     
-    /// Betting outcomes (e.g., ["Yes", "No Change", "No"])
+    /// Betting outcomes (required) - e.g., ["Yes", "No Change", "No"]
     pub outcomes: Vec<String>,
     
-    /// Initial odds for each outcome (should sum to 1.0)
-    /// e.g., [0.49, 0.02, 0.49] for Yes/NoChange/No
-    pub initial_odds: Vec<f64>,
+    /// Initial probabilities (optional) - defaults to equal split if not provided
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub initial_probabilities: Option<Vec<f64>>,
     
-    /// Source URL where event was discovered
-    pub source: String,
+    /// Source URL (required) - used for content hash deduplication
+    pub source_url: String,
     
-    /// Publication date (ISO8601)
-    pub pub_date: String,
+    /// Image URL for market display (optional)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub image_url: Option<String>,
     
-    /// When the market resolves (ISO8601)
-    pub resolution_date: String,
+    /// Event dates (required: published; optional: freeze, resolution)
+    pub dates: EventDates,
     
-    /// When betting freezes (ISO8601) - typically before resolution
-    pub freeze_date: String,
-    
-    /// Resolution rules for each outcome
-    #[serde(default)]
+    /// Resolution rules (optional)
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub resolution_rules: Option<ResolutionRules>,
     
-    /// Category: sports, crypto, politics, tech, business
-    #[serde(default)]
-    pub category: Option<String>,
+    /// Market ID assigned by L2 using content hash (internal)
+    #[serde(skip_serializing_if = "String::is_empty", default)]
+    pub market_id: String,
     
-    /// AI confidence score (0.0 - 1.0)
-    #[serde(default)]
-    pub confidence: Option<f64>,
+    /// Whether market was added to ledger (internal)
+    #[serde(skip_serializing, default)]
+    pub added_to_ledger: bool,
 }
 
 fn default_market_type() -> String {
@@ -113,54 +151,46 @@ fn default_market_type() -> String {
 }
 
 impl RssEvent {
-    /// Create a new RSS event
-    pub fn new(
-        market_id: String,
-        meta_title: String,
-        meta_description: String,
-        outcomes: Vec<String>,
-        initial_odds: Vec<f64>,
-        source: String,
-        pub_date: String,
-        resolution_date: String,
-        freeze_date: String,
-    ) -> Self {
-        Self {
-            market_id,
-            meta_title,
-            meta_description,
-            market_type: default_market_type(),
-            outcomes,
-            initial_odds,
-            source,
-            pub_date,
-            resolution_date,
-            freeze_date,
-            resolution_rules: None,
-            category: None,
-            confidence: None,
+    /// Get probabilities with fallback to equal split
+    pub fn get_probabilities(&self) -> Vec<f64> {
+        if let Some(ref probs) = self.initial_probabilities {
+            probs.clone()
+        } else {
+            // Equal split across outcomes
+            let equal_prob = 1.0 / self.outcomes.len() as f64;
+            vec![equal_prob; self.outcomes.len()]
         }
+    }
+    
+    /// Get category with fallback to "uncategorized"
+    pub fn get_category(&self) -> String {
+        self.category.clone().unwrap_or_else(|| "uncategorized".to_string())
+    }
+    
+    /// Generate content hash for deduplication
+    /// Uses SHA-256 of title + source_url
+    pub fn generate_content_hash(&self) -> String {
+        let mut hasher = Sha256::new();
+        hasher.update(self.title.as_bytes());
+        hasher.update(self.source_url.as_bytes());
+        hex::encode(hasher.finalize())
     }
     
     /// Validate the RSS event
     pub fn validate(&self) -> Result<(), String> {
-        // Check market_id
-        if self.market_id.is_empty() {
-            return Err("market_id is required".to_string());
-        }
-        
         // Check title
-        if self.meta_title.is_empty() {
-            return Err("meta_title is required".to_string());
+        if self.title.is_empty() {
+            return Err("title is required".to_string());
         }
         
-        // Check outcomes match initial_odds
-        if self.outcomes.len() != self.initial_odds.len() {
-            return Err(format!(
-                "outcomes count ({}) must match initial_odds count ({})",
-                self.outcomes.len(),
-                self.initial_odds.len()
-            ));
+        // Check description
+        if self.description.is_empty() {
+            return Err("description is required".to_string());
+        }
+        
+        // Check source_url
+        if self.source_url.is_empty() {
+            return Err("source_url is required".to_string());
         }
         
         // Check at least 2 outcomes
@@ -168,24 +198,38 @@ impl RssEvent {
             return Err("At least 2 outcomes required".to_string());
         }
         
-        // Check initial_odds sum to ~1.0 (with tolerance for floating point)
-        let odds_sum: f64 = self.initial_odds.iter().sum();
-        if odds_sum < 0.99 || odds_sum > 1.01 {
-            return Err(format!(
-                "initial_odds must sum to 1.0 (got {})",
-                odds_sum
-            ));
+        // Check published date
+        if self.dates.published.is_empty() {
+            return Err("dates.published is required".to_string());
         }
         
-        // Check all odds are positive
-        if self.initial_odds.iter().any(|&o| o < 0.0) {
-            return Err("All initial_odds must be non-negative".to_string());
+        // If probabilities provided, validate them
+        if let Some(ref probs) = self.initial_probabilities {
+            if probs.len() != self.outcomes.len() {
+                return Err(format!(
+                    "initial_probabilities count ({}) must match outcomes count ({})",
+                    probs.len(),
+                    self.outcomes.len()
+                ));
+            }
+            
+            let sum: f64 = probs.iter().sum();
+            if sum < 0.99 || sum > 1.01 {
+                return Err(format!(
+                    "initial_probabilities must sum to 1.0 (got {})",
+                    sum
+                ));
+            }
+            
+            if probs.iter().any(|&p| p < 0.0 || p > 1.0) {
+                return Err("All probabilities must be between 0.0 and 1.0".to_string());
+            }
         }
         
         Ok(())
     }
     
-    /// Convert initial odds to CPMM reserves
+    /// Convert initial probabilities to CPMM reserves
     /// 
     /// For a pool with total liquidity L and odds [p1, p2, p3],
     /// reserves are calculated to achieve those prices.
@@ -193,25 +237,23 @@ impl RssEvent {
     /// For binary: reserve_i = L * (1 - p_i)
     /// Price(i) = other_reserves / total = 1 - reserve_i/total = p_i
     pub fn calculate_initial_reserves(&self, total_liquidity: f64) -> Vec<f64> {
-        // For CPMM, price of outcome i = (sum of other reserves) / total
-        // To achieve price p_i, we need reserve_i = L * (1 - p_i) / (n-1)
-        // where n is number of outcomes
-        
+        let probs = self.get_probabilities();
         let n = self.outcomes.len() as f64;
         
-        self.initial_odds.iter().map(|&odds| {
-            // Higher odds = lower reserve (more valuable = scarcer)
-            total_liquidity * (1.0 - odds) / (n - 1.0)
+        probs.iter().map(|&prob| {
+            // Higher probability = lower reserve (more valuable = scarcer)
+            total_liquidity * (1.0 - prob) / (n - 1.0)
         }).collect()
     }
     
-    /// Get the dominant outcome (highest initial odds)
+    /// Get the dominant outcome (highest probability)
     pub fn get_favorite(&self) -> Option<(usize, &str, f64)> {
-        self.initial_odds
+        let probs = self.get_probabilities();
+        probs
             .iter()
             .enumerate()
             .max_by(|a, b| a.1.partial_cmp(b.1).unwrap())
-            .map(|(i, &odds)| (i, self.outcomes[i].as_str(), odds))
+            .map(|(i, &prob)| (i, self.outcomes[i].as_str(), prob))
     }
     
     /// Check if this is a standard Yes/No/NoChange market
@@ -278,6 +320,168 @@ impl RssFeedManager {
             .unwrap()
             .as_secs();
     }
+}
+
+// ============================================================================
+// RSS FILE PERSISTENCE
+// ============================================================================
+
+/// Write RssEvent to RSS XML file in the rss/ folder
+pub fn write_rss_event_to_file(event: &RssEvent, rss_dir: &str) -> Result<String, String> {
+    // Create rss directory if it doesn't exist
+    if let Err(e) = fs::create_dir_all(rss_dir) {
+        return Err(format!("Failed to create RSS directory: {}", e));
+    }
+    
+    // Generate filename from market_id (first 12 chars for readability)
+    let filename = format!("{}/{}.rss", rss_dir, &event.market_id[..12.min(event.market_id.len())]);
+    
+    // Build RSS XML content
+    let xml = format!(
+        r#"<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0" xmlns:blackbook="https://blackbook.market/rss">
+  <channel>
+    <title>BlackBook Prediction Market</title>
+    <link>https://blackbook.market</link>
+    <description>Prediction market events on BlackBook Layer 2</description>
+    <item>
+      <guid isPermaLink="false">{}</guid>
+      <title>{}</title>
+      <description>{}</description>
+      <link>{}</link>
+      <pubDate>{}</pubDate>
+      <blackbook:marketId>{}</blackbook:marketId>
+      <blackbook:category>{}</blackbook:category>
+      <blackbook:marketType>{}</blackbook:marketType>
+      <blackbook:outcomes>{}</blackbook:outcomes>
+      <blackbook:probabilities>{}</blackbook:probabilities>
+      <blackbook:source>{}</blackbook:source>
+      <blackbook:tags>{}</blackbook:tags>
+      <blackbook:addedToLedger>{}</blackbook:addedToLedger>
+      <blackbook:freezeDate>{}</blackbook:freezeDate>
+      <blackbook:resolutionDate>{}</blackbook:resolutionDate>
+    </item>
+  </channel>
+</rss>"#,
+        event.market_id,
+        escape_xml(&event.title),
+        escape_xml(&event.description),
+        escape_xml(&event.source_url),
+        event.dates.published,
+        event.market_id,
+        escape_xml(&event.get_category()),
+        escape_xml(&event.market_type),
+        event.outcomes.join(","),
+        event.get_probabilities().iter()
+            .map(|p| format!("{:.4}", p))
+            .collect::<Vec<_>>()
+            .join(","),
+        escape_xml(&event.source.clone().unwrap_or_else(|| "Unknown".to_string())),
+        event.tags.join(","),
+        event.added_to_ledger,
+        event.dates.freeze.clone().unwrap_or_else(|| "TBD".to_string()),
+        event.dates.resolution.clone().unwrap_or_else(|| "TBD".to_string())
+    );
+    
+    // Write to file
+    if let Err(e) = fs::write(&filename, xml) {
+        return Err(format!("Failed to write RSS file: {}", e));
+    }
+    
+    Ok(filename)
+}
+
+/// Load all RSS events from the rss/ folder
+pub fn load_rss_events_from_folder(rss_dir: &str) -> Vec<RssEvent> {
+    let mut events = Vec::new();
+    
+    // Read all .rss files in directory
+    if let Ok(entries) = fs::read_dir(rss_dir) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.extension().and_then(|s| s.to_str()) == Some("rss") {
+                if let Ok(content) = fs::read_to_string(&path) {
+                    // Parse RSS XML and extract event data (simplified)
+                    // In production, use a proper XML parser like quick-xml
+                    if let Some(event) = parse_rss_xml(&content) {
+                        events.push(event);
+                    }
+                }
+            }
+        }
+    }
+    
+    events
+}
+
+/// Parse RSS XML content into RssEvent (simplified parser)
+fn parse_rss_xml(xml: &str) -> Option<RssEvent> {
+    // Extract values between XML tags
+    let extract = |tag: &str| -> Option<String> {
+        let start_tag = format!("<{}>", tag);
+        let end_tag = format!("</{}>", tag);
+        xml.find(&start_tag)
+            .and_then(|start| xml.find(&end_tag).map(|end| (start, end)))
+            .map(|(start, end)| xml[start + start_tag.len()..end].to_string())
+    };
+    
+    let market_id = extract("blackbook:marketId")?;
+    let title = extract("title")?;
+    let description = extract("description")?;
+    let source_url = extract("link")?;
+    let published = extract("pubDate")?;
+    let category = extract("blackbook:category");
+    let market_type = extract("blackbook:marketType").unwrap_or_else(|| "three_choice".to_string());
+    let source = extract("blackbook:source");
+    
+    let outcomes_str = extract("blackbook:outcomes")?;
+    let outcomes: Vec<String> = outcomes_str.split(',').map(|s| s.to_string()).collect();
+    
+    let probs_str = extract("blackbook:probabilities");
+    let initial_probabilities = probs_str.and_then(|s| {
+        let probs: Result<Vec<f64>, _> = s.split(',').map(|p| p.parse()).collect();
+        probs.ok()
+    });
+    
+    let tags_str = extract("blackbook:tags").unwrap_or_default();
+    let tags: Vec<String> = if tags_str.is_empty() {
+        Vec::new()
+    } else {
+        tags_str.split(',').map(|s| s.to_string()).collect()
+    };
+    
+    let freeze = extract("blackbook:freezeDate").filter(|s| s != "TBD");
+    let resolution = extract("blackbook:resolutionDate").filter(|s| s != "TBD");
+    
+    Some(RssEvent {
+        market_id,
+        title,
+        description,
+        source,
+        category,
+        tags,
+        market_type,
+        outcomes,
+        initial_probabilities,
+        source_url,
+        image_url: None,
+        dates: EventDates {
+            published,
+            freeze,
+            resolution,
+        },
+        resolution_rules: None,
+        added_to_ledger: true,
+    })
+}
+
+/// Escape XML special characters
+fn escape_xml(s: &str) -> String {
+    s.replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('"', "&quot;")
+        .replace('\'', "&apos;")
 }
 
 // ============================================================================

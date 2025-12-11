@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0" xmlns:blackbook="https://blackbook.market/rss">
+  <channel>
+    <title>BlackBook Prediction Market</title>
+    <link>https://blackbook.market</link>
+    <description>Prediction market events on BlackBook Layer 2</description>
+    <item>
+      <guid isPermaLink="false">ffbe9fcaad8c41e2dda3188174a99bf4ae3b2b0b2cf3a265af10e53d5386e757</guid>
+      <title>Will &apos;Meta ditches NVIDIA for Googles  TPUs for AI Compu&apos; predictions come true?</title>
+      <description>Based on: Meta ditches NVIDIA for Googles  TPUs for AI Compute ?</description>
+      <link>https://www.objectwire.org/meta-platforms-may-ditch-nvidia-for-googles-parent-company-tpus-custom-compute-chips-for-ai</link>
+      <pubDate>2025-12-11T02:27:30.087377+00:00</pubDate>
+      <blackbook:marketId>ffbe9fcaad8c41e2dda3188174a99bf4ae3b2b0b2cf3a265af10e53d5386e757</blackbook:marketId>
+      <blackbook:category>uncategorized</blackbook:category>
+      <blackbook:marketType>three_choice</blackbook:marketType>
+      <blackbook:outcomes>Yes,No Change,No</blackbook:outcomes>
+      <blackbook:probabilities>0.4900,0.0200,0.4900</blackbook:probabilities>
+      <blackbook:source>rss_market_dbe0e34d131a</blackbook:source>
+      <blackbook:tags></blackbook:tags>
+      <blackbook:addedToLedger>true</blackbook:addedToLedger>
+      <blackbook:freezeDate>TBD</blackbook:freezeDate>
+      <blackbook:resolutionDate>TBD</blackbook:resolutionDate>
+    </item>
+  </channel>
+</rss>

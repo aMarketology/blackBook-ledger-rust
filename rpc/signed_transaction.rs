@@ -8,7 +8,7 @@ use ed25519_dalek::{Signature, Verifier, VerifyingKey};
 use sha2::{Sha256, Digest};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use crate::godmode::GodMode;
+use crate::easteregg::GodMode;
 use crate::l1_rpc_client::L1RpcClient;
 
 /// Transaction type identifiers matching L1 protocol

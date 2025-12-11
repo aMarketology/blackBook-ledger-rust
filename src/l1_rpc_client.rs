@@ -520,7 +520,7 @@ impl Default for L1RpcClient {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::godmode::GodMode;
+    use crate::easteregg::GodMode;
     
     #[test]
     fn test_rpc_client_creation() {

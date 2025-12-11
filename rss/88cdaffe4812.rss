@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0" xmlns:blackbook="https://blackbook.market/rss">
+  <channel>
+    <title>BlackBook Prediction Market</title>
+    <link>https://blackbook.market</link>
+    <description>Prediction market events on BlackBook Layer 2</description>
+    <item>
+      <guid isPermaLink="false">88cdaffe48124a2c5b6aac58048fd7269ff61240c1dfad0028a8357900ed1c40</guid>
+      <title>Will &apos;Trump orders to stop state-level AI regulation&apos; predictions come true?</title>
+      <description>Based on: Trump orders to stop state-level AI regulation</description>
+      <link>https://www.objectwire.org/trump-orders-to-stop-state-level-ai-regulation</link>
+      <pubDate>2025-12-11T02:28:59.505345+00:00</pubDate>
+      <blackbook:marketId>88cdaffe48124a2c5b6aac58048fd7269ff61240c1dfad0028a8357900ed1c40</blackbook:marketId>
+      <blackbook:category>uncategorized</blackbook:category>
+      <blackbook:marketType>three_choice</blackbook:marketType>
+      <blackbook:outcomes>Yes,No Change,No</blackbook:outcomes>
+      <blackbook:probabilities>0.4900,0.0200,0.4900</blackbook:probabilities>
+      <blackbook:source>rss_market_5c6c3da0bf0b</blackbook:source>
+      <blackbook:tags></blackbook:tags>
+      <blackbook:addedToLedger>true</blackbook:addedToLedger>
+      <blackbook:freezeDate>TBD</blackbook:freezeDate>
+      <blackbook:resolutionDate>TBD</blackbook:resolutionDate>
+    </item>
+  </channel>
+</rss>
