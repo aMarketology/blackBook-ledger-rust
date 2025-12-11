@@ -1,5 +1,5 @@
 // ============================================================================
-// BlackBook Layer 2 Prediction Market - Integration SDK
+// Layer 2 Prediction Market - Integration SDK
 // ============================================================================
 //
 // Production-ready SDK for frontend betting integration.
@@ -8,7 +8,8 @@
 //   2. Signed Transactions - Full cryptographic auth with ed25519
 //
 // Quick Start:
-//   const sdk = new BlackBookSDK();
+//   import { PredictionMarket } from './layer2_integration_sdk.js';
+//   const sdk = new PredictionMarket();
 //   await sdk.loginWithSupabase(jwt);
 //   await sdk.placeBet('market-id', 0, 50);
 //
@@ -64,7 +65,7 @@ function bytesToHex(bytes) {
 // SDK CLASS
 // ============================================================================
 
-class BlackBookSDK {
+class PredictionMarket {
   /**
    * Initialize the SDK
    * @param {Object} config - Configuration options
@@ -649,6 +650,109 @@ class BlackBookSDK {
   }
 
   // ==========================================================================
+  // RSS MARKET INITIALIZATION
+  // ==========================================================================
+
+  /**
+   * Initialize a market from RSS event payload
+   * POST /markets/rss
+   * 
+   * @param {Object} rssEvent - RSS event payload
+   * @param {string} rssEvent.market_id - Unique market ID
+   * @param {string} rssEvent.meta_title - Market title
+   * @param {string} rssEvent.meta_description - Market description
+   * @param {string} rssEvent.market_type - "binary" | "three_choice" | "multi"
+   * @param {string[]} rssEvent.outcomes - Betting outcomes ["Yes", "No Change", "No"]
+   * @param {number[]} rssEvent.initial_odds - Initial odds [0.49, 0.02, 0.49]
+   * @param {string} rssEvent.source - Source URL
+   * @param {string} rssEvent.pub_date - Publication date (ISO8601)
+   * @param {string} rssEvent.resolution_date - Resolution date (ISO8601)
+   * @param {string} rssEvent.freeze_date - Betting freeze date (ISO8601)
+   * @param {Object} [rssEvent.resolution_rules] - Resolution rules for each outcome
+   * @returns {Promise<Object>} Created market response
+   * 
+   * @example
+   * await sdk.initializeMarketFromRss({
+   *   market_id: "rss_market_abc123",
+   *   meta_title: "Will BTC hit $100k by Jan 2025?",
+   *   meta_description: "Based on current market trends...",
+   *   market_type: "three_choice",
+   *   outcomes: ["Yes", "No Change", "No"],
+   *   initial_odds: [0.49, 0.02, 0.49],
+   *   source: "https://example.com/article",
+   *   pub_date: "2024-12-10T00:00:00Z",
+   *   resolution_date: "2025-01-01T00:00:00Z",
+   *   freeze_date: "2024-12-31T23:00:00Z",
+   *   resolution_rules: {
+   *     optional: false,
+   *     rules: {
+   *       "YES": "BTC price >= $100,000 on Coinbase at 00:00 UTC Jan 1, 2025",
+   *       "NO_CHANGE": "BTC price between $95,000 and $100,000",
+   *       "NO": "BTC price < $95,000"
+   *     }
+   *   }
+   * });
+   */
+  async initializeMarketFromRss(rssEvent) {
+    // Validate required fields
+    const required = ['market_id', 'meta_title', 'outcomes', 'initial_odds', 'resolution_date'];
+    for (const field of required) {
+      if (!rssEvent[field]) {
+        throw new Error(`Missing required field: ${field}`);
+      }
+    }
+
+    // Validate odds sum to 1.0
+    const oddsSum = rssEvent.initial_odds.reduce((a, b) => a + b, 0);
+    if (Math.abs(oddsSum - 1.0) > 0.01) {
+      throw new Error(`initial_odds must sum to 1.0 (got ${oddsSum})`);
+    }
+
+    // Validate outcomes match odds
+    if (rssEvent.outcomes.length !== rssEvent.initial_odds.length) {
+      throw new Error(`outcomes count must match initial_odds count`);
+    }
+
+    const response = await fetch(`${this.l2Url}/markets/rss`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(rssEvent)
+    });
+
+    return response.json();
+  }
+
+  /**
+   * Batch initialize multiple markets from RSS feed
+   * POST /markets/rss/batch
+   * @param {Object[]} rssEvents - Array of RSS event payloads
+   * @returns {Promise<Object>} Batch creation response
+   */
+  async initializeMarketsFromRssBatch(rssEvents) {
+    if (!Array.isArray(rssEvents) || rssEvents.length === 0) {
+      throw new Error('rssEvents must be a non-empty array');
+    }
+
+    const response = await fetch(`${this.l2Url}/markets/rss/batch`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ events: rssEvents })
+    });
+
+    return response.json();
+  }
+
+  /**
+   * Get market by RSS market ID
+   * GET /markets/rss/:marketId
+   * @param {string} marketId - RSS market ID
+   */
+  async getMarketByRssId(marketId) {
+    const response = await fetch(`${this.l2Url}/markets/rss/${marketId}`);
+    return response.json();
+  }
+
+  // ==========================================================================
   // PRICE ENDPOINTS
   // ==========================================================================
 
@@ -859,12 +963,16 @@ class BlackBookSDK {
 // EXPORTS
 // ============================================================================
 
-// CommonJS
+// ES Module exports
+export { PredictionMarket, generateNonce, getTimestamp, hexToBytes, bytesToHex };
+export default PredictionMarket;
+
+// CommonJS (for Node.js environments)
 if (typeof module !== 'undefined' && module.exports) {
-  module.exports = { BlackBookSDK, generateNonce, getTimestamp, hexToBytes, bytesToHex };
+  module.exports = { PredictionMarket, generateNonce, getTimestamp, hexToBytes, bytesToHex };
 }
 
 // Browser global
 if (typeof window !== 'undefined') {
-  window.BlackBookSDK = BlackBookSDK;
+  window.PredictionMarket = PredictionMarket;
 }

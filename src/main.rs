@@ -11,20 +11,24 @@ use std::{net::SocketAddr, sync::{Arc, Mutex}, collections::HashMap};
 use tower_http::cors::{Any, CorsLayer};
 use uuid::Uuid;
 
-mod ledger;
+mod market_resolve;
 mod hot_upgrades;
-mod markets;
-mod escrow;
 mod auth;
-mod cpmm;
 mod godmode;
 mod l1_rpc_client;
-mod signed_transaction;
 mod bridge;
-use ledger::Ledger;
+
+#[path = "../rss/mod.rs"]
+mod rss;
+
+#[path = "../rpc/mod.rs"]
+mod rpc;
+
+use market_resolve::{Ledger, cpmm, cpmm::PendingEvent};
+use rss::{RssEvent, ResolutionRules};
+use rpc::{SignedTransaction, L1BlackBookRpc};
 use hot_upgrades::{ProxyState, AuthorizedAccount, AuthorityLevel};
 use auth::{UserRegistry, SupabaseConfig, User, SignupRequest, LoginRequest, AuthResponse};
-use cpmm::PendingEvent;
 use l1_rpc_client::L1RpcClient;
 use bridge::{BridgeManager, BridgeRequest, BridgeCompleteRequest, BridgeCompleteResponse, BridgeResponse, BridgeStatusResponse};
 
@@ -569,7 +573,7 @@ struct BetRequest {
 #[derive(Debug, Deserialize)]
 struct SignedBetRequest {
     /// The signed transaction containing BetPlacement payload
-    signed_tx: signed_transaction::SignedTransaction,
+    signed_tx: rpc::SignedTransaction,
 }
 
 // Signed Bet Response
@@ -1041,7 +1045,7 @@ async fn initiate_bridge(
     
     // Extract bridge details from payload
     let (target_layer, target_address, amount) = match &request.signed_tx.payload {
-        signed_transaction::TransactionPayload::Bridge { target_layer, target_address, amount } => {
+        rpc::TransactionPayload::Bridge { target_layer, target_address, amount } => {
             (target_layer.clone(), target_address.clone(), *amount)
         }
         _ => {
@@ -1214,7 +1218,7 @@ async fn place_signed_bet(
     
     // 2. Extract bet details from payload
     let (market_id, outcome, amount) = match &signed_tx.payload {
-        signed_transaction::TransactionPayload::BetPlacement { market_id, outcome, amount } => {
+        rpc::TransactionPayload::BetPlacement { market_id, outcome, amount } => {
             (market_id.clone(), *outcome, *amount)
         }
         _ => {

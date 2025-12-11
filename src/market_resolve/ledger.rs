@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use crate::markets::{MarketManager, Bet};
-use crate::escrow::EscrowManager;
+use super::markets::{MarketManager, Bet};
+use super::escrow::EscrowManager;
 use crate::godmode::GodMode;
 
 /// Minimal blockchain ledger for BlackBook prediction market

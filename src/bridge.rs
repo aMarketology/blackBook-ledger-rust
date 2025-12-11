@@ -12,7 +12,7 @@ use std::sync::{Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
 use uuid::Uuid;
 
-use crate::signed_transaction::{SignedTransaction, TransactionPayload, SignedTxError};
+use crate::rpc::{SignedTransaction, TransactionPayload, SignedTxError};
 
 // ============================================================================
 // CONSTANTS
