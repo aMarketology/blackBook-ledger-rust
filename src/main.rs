@@ -28,7 +28,7 @@ mod rpc;
 
 use app_state::{AppState, SharedState};
 use handlers::*;
-use routes::auth::{login, get_user};
+use routes::auth::{connect_wallet, get_wallet_balance};
 
 #[tokio::main]
 async fn main() {
@@ -49,12 +49,12 @@ async fn main() {
         .route("/markets", post(create_market))
         .route("/markets/:id", get(get_market))
         
-        // ===== AUTHENTICATION ENDPOINTS =====
-        .route("/auth/login", post(login))
-        .route("/auth/user", get(get_user))
+        // ===== AUTHENTICATION ENDPOINTS (NO JWT - CRYPTOGRAPHIC SIGNATURES ONLY) =====
+        .route("/auth/connect", post(connect_wallet))
         
-        // ===== BETTING ENDPOINT (CRYPTOGRAPHIC SIGNATURES ONLY) =====
+        // ===== BETTING ENDPOINTS =====
         .route("/bet/signed", post(place_signed_bet))
+        .route("/rpc/submit", post(place_signed_bet))  // SDK compatibility alias
         .route("/bets/:account", get(get_user_bets))
         
         // ===== LEDGER ENDPOINTS =====
@@ -87,18 +87,18 @@ async fn main() {
     println!("╚════════════════════════════════════════════╝\n");
     
     println!("📋 Available Endpoints:");
-    println!("   POST /auth/login        - Login with Supabase JWT");
-    println!("   GET  /auth/user         - Get authenticated user info");
+    println!("   POST /auth/connect      - Connect wallet (creates & funds if new)");
     println!("   GET  /markets           - List all prediction markets");
     println!("   POST /markets           - Create new market");
     println!("   GET  /markets/:id       - Get market details");
     println!("   POST /bet/signed        - Place bet (cryptographic signature)");
+    println!("   POST /rpc/submit        - Place bet (SDK alias)");
     println!("   GET  /bets/:account     - Get user bet history");
     println!("   GET  /balance/:account  - Get account balance");
     println!("   POST /transfer          - Transfer tokens");
     println!("   GET  /ledger            - View blockchain activity");
     println!("   GET  /rpc/nonce/:addr   - Get nonce for signing");
-    println!("\n📡 Monitoring all ledger actions in real-time...\n");
+    println!("\n📡 Cryptographic signatures only - No JWT required\n");
 
     // Setup graceful shutdown
     let listener = tokio::net::TcpListener::bind(&addr).await.unwrap();

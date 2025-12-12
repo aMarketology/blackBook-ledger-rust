@@ -94,18 +94,33 @@ class PredictionMarket {
    * Login with Supabase JWT token
    * Queries L1 for user's registered wallet address
    * @param {string} jwt - Supabase JWT token
+   * @param {string} username - Optional username for lookup
    * @returns {Promise<Object>} Login response with wallet and balance
    */
-  async loginWithSupabase(jwt) {
+  async loginWithSupabase(jwt, username = null) {
     this.jwt = jwt;
     
     const response = await fetch(`${this.l2Url}/auth/login`, {
       method: 'POST',
       headers: {
-        'Authorization': `Bearer ${jwt}`,
         'Content-Type': 'application/json'
-      }
+        // Don't send Authorization header for login - send token in body
+      },
+      body: JSON.stringify({
+        token: jwt,           // Send JWT in body
+        username: username    // Optional username for lookup
+      })
     });
+
+    // Handle non-OK responses properly
+    if (!response.ok) {
+      const errorText = await response.text();
+      console.error(`❌ L2 login failed (${response.status}): ${errorText}`);
+      return {
+        success: false,
+        error: `Server error ${response.status}: ${errorText}`
+      };
+    }
 
     const data = await response.json();
 
@@ -227,32 +242,125 @@ class PredictionMarket {
   // ==========================================================================
 
   /**
-   * Place a bet using Supabase JWT authentication (Production)
-   * POST /bet/auth
+   * Get nonce for transaction signing
+   * GET /rpc/nonce/:address
+   * @param {string} address - Wallet address
+   * @returns {Promise<number>} Current nonce
+   */
+  async fetchNonce(address) {
+    const addr = address || this.walletAddress;
+    if (!addr) {
+      throw new Error('No address specified or connected.');
+    }
+
+    try {
+      const response = await fetch(`${this.l2Url}/rpc/nonce/${addr}`);
+      if (!response.ok) {
+        console.warn(`⚠️ Failed to fetch nonce: HTTP ${response.status}`);
+        return 1; // Default nonce
+      }
+      
+      const text = await response.text();
+      if (!text || text.trim() === '') {
+        return 1; // Default nonce for empty response
+      }
+      
+      try {
+        const data = JSON.parse(text);
+        return data.nonce || data || 1;
+      } catch {
+        // Response might be just a number
+        const parsed = parseInt(text, 10);
+        return isNaN(parsed) ? 1 : parsed;
+      }
+    } catch (error) {
+      console.warn('⚠️ Error fetching nonce:', error);
+      return 1;
+    }
+  }
+
+  /**
+   * Place a bet using signed transaction format
+   * POST /rpc/submit
    * @param {string} marketId - Market UUID
    * @param {number} outcome - Outcome index (0 = first option, 1 = second, etc.)
    * @param {number} amount - Amount in BB tokens
+   * @param {string} signature - Hex signature string (optional, mock for now)
    * @returns {Promise<Object>} Bet response with transaction ID
    */
-  async placeBet(marketId, outcome, amount) {
-    if (!this.jwt) {
-      throw new Error('Not logged in. Call loginWithSupabase() first.');
+  async placeBet(marketId, outcome, amount, signature = null) {
+    if (!this.walletAddress) {
+      throw new Error('No wallet connected. Call loginWithSupabase() first.');
     }
 
-    const response = await fetch(`${this.l2Url}/bet/auth`, {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${this.jwt}`,
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify({
-        market_id: marketId,
-        outcome,
-        amount
-      })
-    });
+    try {
+      // Fetch current nonce from the API
+      const nonce = await this.fetchNonce(this.walletAddress);
+      const timestamp = getTimestamp();
 
-    return response.json();
+      // Build signed transaction in the EXACT required format
+      const signedTx = {
+        signed_tx: {
+          sender_address: this.walletAddress,
+          payload: {
+            BetPlacement: {
+              market_id: marketId,
+              outcome: outcome,
+              amount: parseFloat(amount)
+            }
+          },
+          nonce: nonce,
+          timestamp: timestamp,
+          signature: signature || `sig_${this.walletAddress.slice(0, 8)}_${Date.now().toString(16)}`
+        }
+      };
+
+      console.log('📤 Placing bet with signed transaction:', JSON.stringify(signedTx, null, 2));
+
+      // Send to /bet/signed endpoint
+      const response = await fetch(`${this.l2Url}/bet/signed`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(this.jwt ? { 'Authorization': `Bearer ${this.jwt}` } : {})
+        },
+        body: JSON.stringify(signedTx)
+      });
+
+      // Handle response - check if there's content
+      const text = await response.text();
+      console.log(`📥 Raw response from /bet/signed: "${text}" (status: ${response.status})`);
+
+      // Parse response if there's content
+      let data = {};
+      if (text && text.trim() !== '') {
+        try {
+          data = JSON.parse(text);
+        } catch (e) {
+          // Response might be a simple string/ID
+          data = { tx_id: text.trim() };
+        }
+      }
+
+      // Check if successful based on HTTP status
+      if (response.ok) {
+        return { 
+          success: true, 
+          tx_id: data.tx_id || data.transaction_id || data.hash || `tx_${Date.now()}`,
+          ...data 
+        };
+      }
+
+      // Handle error response
+      return { 
+        success: false, 
+        error: data.error || data.message || `HTTP ${response.status}` 
+      };
+
+    } catch (error) {
+      console.error('❌ placeBet error:', error);
+      return { success: false, error: error.message || 'Network error' };
+    }
   }
 
   /**
@@ -647,109 +755,6 @@ class PredictionMarket {
    */
   getAIEventsFeedUrl() {
     return `${this.l2Url}/ai/events/feed.rss`;
-  }
-
-  // ==========================================================================
-  // RSS MARKET INITIALIZATION
-  // ==========================================================================
-
-  /**
-   * Initialize a market from RSS event payload
-   * POST /markets/rss
-   * 
-   * @param {Object} rssEvent - RSS event payload
-   * @param {string} rssEvent.market_id - Unique market ID
-   * @param {string} rssEvent.meta_title - Market title
-   * @param {string} rssEvent.meta_description - Market description
-   * @param {string} rssEvent.market_type - "binary" | "three_choice" | "multi"
-   * @param {string[]} rssEvent.outcomes - Betting outcomes ["Yes", "No Change", "No"]
-   * @param {number[]} rssEvent.initial_odds - Initial odds [0.49, 0.02, 0.49]
-   * @param {string} rssEvent.source - Source URL
-   * @param {string} rssEvent.pub_date - Publication date (ISO8601)
-   * @param {string} rssEvent.resolution_date - Resolution date (ISO8601)
-   * @param {string} rssEvent.freeze_date - Betting freeze date (ISO8601)
-   * @param {Object} [rssEvent.resolution_rules] - Resolution rules for each outcome
-   * @returns {Promise<Object>} Created market response
-   * 
-   * @example
-   * await sdk.initializeMarketFromRss({
-   *   market_id: "rss_market_abc123",
-   *   meta_title: "Will BTC hit $100k by Jan 2025?",
-   *   meta_description: "Based on current market trends...",
-   *   market_type: "three_choice",
-   *   outcomes: ["Yes", "No Change", "No"],
-   *   initial_odds: [0.49, 0.02, 0.49],
-   *   source: "https://example.com/article",
-   *   pub_date: "2024-12-10T00:00:00Z",
-   *   resolution_date: "2025-01-01T00:00:00Z",
-   *   freeze_date: "2024-12-31T23:00:00Z",
-   *   resolution_rules: {
-   *     optional: false,
-   *     rules: {
-   *       "YES": "BTC price >= $100,000 on Coinbase at 00:00 UTC Jan 1, 2025",
-   *       "NO_CHANGE": "BTC price between $95,000 and $100,000",
-   *       "NO": "BTC price < $95,000"
-   *     }
-   *   }
-   * });
-   */
-  async initializeMarketFromRss(rssEvent) {
-    // Validate required fields
-    const required = ['market_id', 'meta_title', 'outcomes', 'initial_odds', 'resolution_date'];
-    for (const field of required) {
-      if (!rssEvent[field]) {
-        throw new Error(`Missing required field: ${field}`);
-      }
-    }
-
-    // Validate odds sum to 1.0
-    const oddsSum = rssEvent.initial_odds.reduce((a, b) => a + b, 0);
-    if (Math.abs(oddsSum - 1.0) > 0.01) {
-      throw new Error(`initial_odds must sum to 1.0 (got ${oddsSum})`);
-    }
-
-    // Validate outcomes match odds
-    if (rssEvent.outcomes.length !== rssEvent.initial_odds.length) {
-      throw new Error(`outcomes count must match initial_odds count`);
-    }
-
-    const response = await fetch(`${this.l2Url}/markets/rss`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(rssEvent)
-    });
-
-    return response.json();
-  }
-
-  /**
-   * Batch initialize multiple markets from RSS feed
-   * POST /markets/rss/batch
-   * @param {Object[]} rssEvents - Array of RSS event payloads
-   * @returns {Promise<Object>} Batch creation response
-   */
-  async initializeMarketsFromRssBatch(rssEvents) {
-    if (!Array.isArray(rssEvents) || rssEvents.length === 0) {
-      throw new Error('rssEvents must be a non-empty array');
-    }
-
-    const response = await fetch(`${this.l2Url}/markets/rss/batch`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ events: rssEvents })
-    });
-
-    return response.json();
-  }
-
-  /**
-   * Get market by RSS market ID
-   * GET /markets/rss/:marketId
-   * @param {string} marketId - RSS market ID
-   */
-  async getMarketByRssId(marketId) {
-    const response = await fetch(`${this.l2Url}/markets/rss/${marketId}`);
-    return response.json();
   }
 
   // ==========================================================================
