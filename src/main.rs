@@ -361,41 +361,11 @@ impl AppState {
             supabase_config: SupabaseConfig::from_env().ok(),  // Load Supabase config if available
         };
 
-        // The ledger now has 8 real accounts with L1_ wallet addresses
-        // These are dynamically generated UUIDs in format: L1_<32 HEX UPPERCASE>
-        // All accounts already initialized with 1000 BB tokens on first run
-        
-        // Display the real blockchain accounts
+        // Display blockchain initialization
         println!("✅ BlackBook Prediction Market Blockchain Initialized");
-        println!("📊 Real Blockchain Accounts (L1 Wallets):");
-        
-        let account_names = vec!["ALICE", "BOB", "CHARLIE", "DIANA", "ETHAN", "FIONA", "GEORGE", "HANNAH", "HOUSE"];
-        
-        for name in &account_names {
-            let address = state.ledger.accounts.get(*name).map(|a| a.clone()).unwrap_or_default();
-            let balance = state.ledger.get_balance(name);
-            println!("   👤 {} | Address: {} | Balance: {} BB", name, address, balance);
-            
-            // Track account initialization
-            state.track_activity(
-                "account_initialized".to_string(),
-                None,
-                None,
-                Some(name.to_string()),
-                Some(balance),
-                format!("Admin account {} initialized with {} BB at address {}", name, balance, address),
-            );
-        }
-
-        println!("💰 Total Circulating Supply: {} BB", 
-            account_names.iter().map(|n| state.ledger.get_balance(n)).sum::<f64>()
-        );
         println!("🔗 Network: Layer 1 Blockchain (L1)");
         println!("💎 Token: BlackBook (BB) - Stable at $0.01");
         println!("");
-
-        // Create sample markets
-        state.create_sample_markets();
 
         state
     }
