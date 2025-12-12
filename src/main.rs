@@ -18,6 +18,7 @@ mod bridge;
 mod models;
 mod app_state;
 mod handlers;
+mod routes;
 
 #[path = "../rss/mod.rs"]
 mod rss;
@@ -27,6 +28,7 @@ mod rpc;
 
 use app_state::{AppState, SharedState};
 use handlers::*;
+use routes::auth::{login, get_user};
 
 #[tokio::main]
 async fn main() {
@@ -36,6 +38,9 @@ async fn main() {
 
     // Initialize application state
     let state: SharedState = Arc::new(Mutex::new(AppState::new()));
+    
+    // Clone state for shutdown handler before moving into router
+    let shutdown_state = state.clone();
 
     // Build router with all endpoints
     let app = Router::new()
@@ -43,6 +48,10 @@ async fn main() {
         .route("/markets", get(get_markets))
         .route("/markets", post(create_market))
         .route("/markets/:id", get(get_market))
+        
+        // ===== AUTHENTICATION ENDPOINTS =====
+        .route("/auth/login", post(login))
+        .route("/auth/user", get(get_user))
         
         // ===== BETTING ENDPOINT (CRYPTOGRAPHIC SIGNATURES ONLY) =====
         .route("/bet/signed", post(place_signed_bet))
@@ -78,6 +87,8 @@ async fn main() {
     println!("╚════════════════════════════════════════════╝\n");
     
     println!("📋 Available Endpoints:");
+    println!("   POST /auth/login        - Login with Supabase JWT");
+    println!("   GET  /auth/user         - Get authenticated user info");
     println!("   GET  /markets           - List all prediction markets");
     println!("   POST /markets           - Create new market");
     println!("   GET  /markets/:id       - Get market details");
@@ -89,7 +100,30 @@ async fn main() {
     println!("   GET  /rpc/nonce/:addr   - Get nonce for signing");
     println!("\n📡 Monitoring all ledger actions in real-time...\n");
 
+    // Setup graceful shutdown
     let listener = tokio::net::TcpListener::bind(&addr).await.unwrap();
+    
+    // Spawn shutdown handler
+    tokio::spawn(async move {
+        tokio::signal::ctrl_c()
+            .await
+            .expect("Failed to install CTRL+C handler");
+        
+        println!("\n\n🛑 Shutdown signal received...");
+        println!("💾 Saving state to disk...");
+        
+        if let Ok(app_state) = shutdown_state.lock() {
+            if let Err(e) = app_state.save_to_disk() {
+                eprintln!("❌ Failed to save state: {}", e);
+            } else {
+                println!("✅ State saved successfully");
+            }
+        }
+        
+        println!("👋 Goodbye!\n");
+        std::process::exit(0);
+    });
+
     axum::serve(listener, app).await.unwrap();
 }
 

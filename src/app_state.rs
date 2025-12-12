@@ -44,12 +44,65 @@ impl AppState {
         println!("💎 Token: BlackBook (BB) - Stable at $0.01");
         println!("");
 
-        // Load markets from RSS events
-        if let Err(e) = state.load_events_from_rss() {
-            eprintln!("⚠️  Warning: Failed to load RSS events: {}", e);
+        // Try to load persisted state first
+        if let Ok(()) = state.load_from_disk() {
+            println!("✅ Loaded persisted state from disk");
+        } else {
+            println!("ℹ️  No persisted state found, starting fresh");
+            // Load markets from RSS events only if no persisted state
+            if let Err(e) = state.load_events_from_rss() {
+                eprintln!("⚠️  Warning: Failed to load RSS events: {}", e);
+            }
         }
 
         state
+    }
+
+    pub fn save_to_disk(&self) -> Result<(), String> {
+        use std::fs;
+        use serde_json;
+
+        #[derive(serde::Serialize)]
+        struct PersistedState {
+            markets: HashMap<String, PredictionMarket>,
+            nonces: HashMap<String, u64>,
+        }
+
+        let state = PersistedState {
+            markets: self.markets.clone(),
+            nonces: self.nonces.clone(),
+        };
+
+        let json = serde_json::to_string_pretty(&state)
+            .map_err(|e| format!("Failed to serialize state: {}", e))?;
+        
+        fs::write("data/state.json", json)
+            .map_err(|e| format!("Failed to write state file: {}", e))?;
+        
+        println!("💾 State saved to disk");
+        Ok(())
+    }
+
+    fn load_from_disk(&mut self) -> Result<(), String> {
+        use std::fs;
+        use serde_json;
+
+        #[derive(serde::Deserialize)]
+        struct PersistedState {
+            markets: HashMap<String, PredictionMarket>,
+            nonces: HashMap<String, u64>,
+        }
+
+        let json = fs::read_to_string("data/state.json")
+            .map_err(|_| "No state file found")?;
+        
+        let state: PersistedState = serde_json::from_str(&json)
+            .map_err(|e| format!("Failed to deserialize state: {}", e))?;
+        
+        self.markets = state.markets;
+        self.nonces = state.nonces;
+        
+        Ok(())
     }
 
     pub fn log_blockchain_activity(&mut self, emoji: &str, action: &str, details: &str) {
