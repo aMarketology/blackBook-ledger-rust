@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0">
+  <channel>
+    <title>Zelle International Stablecoin Payments</title>
+    <link>https://www.objectwire.org/zelle-payment-processor-goes-global-to-allow-crypto-stablecoins-for-international-transactions</link>
+    <description>Will Zelle launch international stablecoin payments by Q3 2026?</description>
+    <item>
+      <title>Will Zelle launch international stablecoin payments by Q3 2026?</title>
+      <description>Zelle, processing $1 trillion in 2024, explores stablecoin adoption for international payments. With GENIUS Act providing regulatory clarity, market resolves YES if Zelle launches stablecoin-based cross-border payments by Sept 30, 2026.</description>
+      <category>crypto</category>
+      <source>objectwire.org</source>
+      <link>https://www.objectwire.org/zelle-payment-processor-goes-global-to-allow-crypto-stablecoins-for-international-transactions</link>
+      <pubDate>Wed, 11 Dec 2025 00:00:00 GMT</pubDate>
+      <guid>zelle_stablecoin_2026</guid>
+      <outcomes>
+        <outcome probability="0.49">Yes</outcome>
+        <outcome probability="0.51">No</outcome>
+      </outcomes>
+      <resolution>
+        <type>binary</type>
+        <deadline>2026-09-30T23:59:59Z</deadline>
+        <rules>Market resolves YES if Zelle officially launches a live, publicly accessible international payment service that accepts stablecoin payments (USDC, USDT, or similar) for cross-border transactions by September 30, 2026. Resolution requires official Zelle press release or verified user reports of the feature being active.</rules>
+      </resolution>
+    </item>
+  </channel>
+</rss>

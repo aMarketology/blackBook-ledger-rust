@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0">
+  <channel>
+    <title>Google Texas Privacy Settlement</title>
+    <link>https://www.objectwire.org/google-finalizes-1-375-billion-settlement-with-texas-over-alleged-privacy-violations</link>
+    <description>Will Google settle with Texas for $1.375B over privacy violations?</description>
+    <item>
+      <title>Will Google settle with Texas for $1.375B over privacy violations?</title>
+      <description>Google's privacy case traces back to December 2018 AP investigation revealing continued location data collection after users disabled Location History. Texas AG Ken Paxton led 2022 multistate suit. Settlement amount reported at $1.375 billion.</description>
+      <category>business</category>
+      <source>objectwire.org</source>
+      <link>https://www.objectwire.org/google-finalizes-1-375-billion-settlement-with-texas-over-alleged-privacy-violations</link>
+      <pubDate>Wed, 11 Dec 2025 00:00:00 GMT</pubDate>
+      <guid>google_texas_settlement_2026</guid>
+      <outcomes>
+        <outcome probability="0.51">Yes - Full Settlement</outcome>
+        <outcome probability="0.32">Yes - Reduced Amount</outcome>
+        <outcome probability="0.17">No - Ongoing Litigation</outcome>
+      </outcomes>
+      <resolution>
+        <type>categorical</type>
+        <deadline>2026-06-30T23:59:59Z</deadline>
+        <rules>Market resolves to "Yes - Full Settlement" if Google pays $1.375B or more. Resolves to "Yes - Reduced Amount" if settlement is finalized at less than $1.375B but more than $500M. Resolves to "No - Ongoing Litigation" if no settlement is reached by June 30, 2026.</rules>
+      </resolution>
+    </item>
+  </channel>
+</rss>

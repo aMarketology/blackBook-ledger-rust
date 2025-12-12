@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0">
+  <channel>
+    <title>Antonio Brown Legal Case</title>
+    <link>https://www.objectwire.org/antonio-brown-apprehended-in-dubai-will-face-attempted-murder-charge-in-miami-during-adin-ross-stream</link>
+    <description>Will Antonio Brown face attempted murder charges in Miami by Q2 2026?</description>
+    <item>
+      <title>Will Antonio Brown face attempted murder charges in Miami by Q2 2026?</title>
+      <description>Former NFL superstar Antonio Brown was apprehended in Dubai on Nov 6, 2025, facing attempted murder charges stemming from shooting incident outside celebrity boxing event. Market resolves YES if formal charges filed by June 30, 2026.</description>
+      <category>sports</category>
+      <source>objectwire.org</source>
+      <link>https://www.objectwire.org/antonio-brown-apprehended-in-dubai-will-face-attempted-murder-charge-in-miami-during-adin-ross-stream</link>
+      <pubDate>Wed, 11 Dec 2025 00:00:00 GMT</pubDate>
+      <guid>antonio_brown_charges_2026</guid>
+      <outcomes>
+        <outcome probability="0.58">Yes</outcome>
+        <outcome probability="0.27">No</outcome>
+        <outcome probability="0.15">Charges Dropped</outcome>
+      </outcomes>
+      <resolution>
+        <type>categorical</type>
+        <deadline>2026-06-30T23:59:59Z</deadline>
+        <rules>Market resolves to "Yes" if Miami-Dade prosecutors formally file attempted murder charges against Antonio Brown by June 30, 2026. Resolves to "No" if no charges are filed. Resolves to "Charges Dropped" if charges are filed but subsequently dropped before the deadline.</rules>
+      </resolution>
+    </item>
+  </channel>
+</rss>

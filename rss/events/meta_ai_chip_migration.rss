@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0">
+  <channel>
+    <title>Meta AI Chip Migration Prediction Market</title>
+    <link>https://www.objectwire.org/meta-platforms-may-ditch-nvidia-for-googles-parent-company-tpus-custom-compute-chips-for-ai</link>
+    <description>Will Meta complete AI chip migration from NVIDIA by end of 2026?</description>
+    <item>
+      <title>Will Meta complete AI chip migration from NVIDIA by end of 2026?</title>
+      <description>Meta Platforms is exploring a shift from NVIDIA GPUs to Google's parent company TPUs and custom compute chips for AI workloads. Market resolves YES if Meta announces 25%+ migration to non-NVIDIA hardware by Dec 31, 2026.</description>
+      <category>tech</category>
+      <source>objectwire.org</source>
+      <link>https://www.objectwire.org/meta-platforms-may-ditch-nvidia-for-googles-parent-company-tpus-custom-compute-chips-for-ai</link>
+      <pubDate>Wed, 11 Dec 2025 00:00:00 GMT</pubDate>
+      <guid>meta_ai_chip_migration_2026</guid>
+      <outcomes>
+        <outcome probability="0.42">Yes</outcome>
+        <outcome probability="0.58">No</outcome>
+      </outcomes>
+      <resolution>
+        <type>binary</type>
+        <deadline>2026-12-31T23:59:59Z</deadline>
+        <rules>Market resolves YES if Meta publicly announces or confirms that 25% or more of their AI computing workload has migrated from NVIDIA GPUs to alternative hardware (TPUs, custom chips) by December 31, 2026. Official Meta press releases, SEC filings, or verified executive statements will be accepted as evidence.</rules>
+      </resolution>
+    </item>
+  </channel>
+</rss>

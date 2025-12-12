@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0">
+  <channel>
+    <title>Palantir Army Contract Deployment</title>
+    <link>https://www.objectwire.org/inside-of-the-palantir-technologies-us-military-government-b</link>
+    <description>Will Palantir's $10B Army contract deliver first deployment by Q2 2026?</description>
+    <item>
+      <title>Will Palantir's $10B Army contract deliver first deployment by Q2 2026?</title>
+      <description>Palantir secured landmark $10 billion U.S. Army contract on July 31, 2025, cementing its role as military tech titan. Market resolves YES if first major deployment occurs by June 30, 2026 under this contract.</description>
+      <category>tech</category>
+      <source>objectwire.org</source>
+      <link>https://www.objectwire.org/inside-of-the-palantir-technologies-us-military-government-b</link>
+      <pubDate>Wed, 11 Dec 2025 00:00:00 GMT</pubDate>
+      <guid>palantir_army_contract_2026</guid>
+      <outcomes>
+        <outcome probability="0.73">Yes</outcome>
+        <outcome probability="0.27">No</outcome>
+      </outcomes>
+      <resolution>
+        <type>binary</type>
+        <deadline>2026-06-30T23:59:59Z</deadline>
+        <rules>Market resolves YES if Palantir or U.S. Army announces the first operational deployment of systems under the $10B July 2025 contract by June 30, 2026. Major deployment defined as serving 1,000+ military personnel or supporting active combat/intelligence operations. Resolution requires official Department of Defense or Palantir announcements.</rules>
+      </resolution>
+    </item>
+  </channel>
+</rss>

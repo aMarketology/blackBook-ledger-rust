@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0">
+  <channel>
+    <title>US Treasury Yield After Moody's Downgrade</title>
+    <link>https://www.objectwire.org/u-s-credit-rating-downgrade-to-aa1-impact-on-trust-markets</link>
+    <description>Will Moody's downgrade trigger US Treasury yield above 5% by Q2 2026?</description>
+    <item>
+      <title>Will Moody's downgrade trigger US Treasury yield above 5% by Q2 2026?</title>
+      <description>Moody's downgraded U.S. credit rating to Aa1 on May 16, 2025, citing debt concerns. This followed S&P's 2011 downgrade. Market resolves YES if 10-year Treasury yield exceeds 5.0% for 5+ consecutive trading days by June 30, 2026.</description>
+      <category>business</category>
+      <source>objectwire.org</source>
+      <link>https://www.objectwire.org/u-s-credit-rating-downgrade-to-aa1-impact-on-trust-markets</link>
+      <pubDate>Wed, 11 Dec 2025 00:00:00 GMT</pubDate>
+      <guid>moodys_treasury_yield_2026</guid>
+      <outcomes>
+        <outcome probability="0.41">Yes</outcome>
+        <outcome probability="0.59">No</outcome>
+      </outcomes>
+      <resolution>
+        <type>binary</type>
+        <deadline>2026-06-30T23:59:59Z</deadline>
+        <rules>Market resolves YES if the 10-year U.S. Treasury yield closes above 5.00% for five or more consecutive trading days at any point between December 11, 2025 and June 30, 2026. Resolution uses official U.S. Department of Treasury daily yield curve data.</rules>
+      </resolution>
+    </item>
+  </channel>
+</rss>

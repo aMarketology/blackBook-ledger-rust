@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0">
+  <channel>
+    <title>Silicon Labs Stock Performance</title>
+    <link>https://www.objectwire.org/silicon-labs-silacon-what-robotos-do-they-work-on</link>
+    <description>Will Silicon Labs stock outperform semiconductor sector in 2026?</description>
+    <item>
+      <title>Will Silicon Labs stock outperform semiconductor sector in 2026?</title>
+      <description>Silicon Labs focuses on IoT connectivity chips with 99.9% uptime and 50% power savings. With 6G and quantum security developments targeting 2030's $100B market, will stock beat semiconductor index by year-end 2026?</description>
+      <category>business</category>
+      <source>objectwire.org</source>
+      <link>https://www.objectwire.org/silicon-labs-silacon-what-robotos-do-they-work-on</link>
+      <pubDate>Wed, 11 Dec 2025 00:00:00 GMT</pubDate>
+      <guid>silicon_labs_stock_2026</guid>
+      <outcomes>
+        <outcome probability="0.52">Yes</outcome>
+        <outcome probability="0.48">No</outcome>
+      </outcomes>
+      <resolution>
+        <type>binary</type>
+        <deadline>2026-12-31T23:59:59Z</deadline>
+        <rules>Market resolves YES if Silicon Labs (SLAB) stock total return (including dividends) outperforms the SOXX (iShares Semiconductor ETF) from December 11, 2025 through December 31, 2026. Resolution uses closing prices on Dec 11, 2025 and Dec 31, 2026 from official market data.</rules>
+      </resolution>
+    </item>
+  </channel>
+</rss>

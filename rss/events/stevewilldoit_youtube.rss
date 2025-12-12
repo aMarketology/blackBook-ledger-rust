@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0">
+  <channel>
+    <title>SteveWillDoIt YouTube Reinstatement</title>
+    <link>https://www.objectwire.org/influencer/steve-will-do-it-kicked-of-logan-paul-s-podcast-making-an-official-return-to-youtube</link>
+    <description>Will SteveWillDoIt be reinstated on YouTube by Jan 1, 2026?</description>
+    <item>
+      <title>Will SteveWillDoIt be reinstated on YouTube by Jan 1, 2026?</title>
+      <description>YouTuber Stephen Deleonardis (SteveWillDoIt) was banned in 2022 for severe violations involving gambling promotions. Reports suggest potential reinstatement by January 1, 2026. Market resolves YES if channel becomes active.</description>
+      <category>culture</category>
+      <source>objectwire.org</source>
+      <link>https://www.objectwire.org/influencer/steve-will-do-it-kicked-of-logan-paul-s-podcast-making-an-official-return-to-youtube</link>
+      <pubDate>Wed, 11 Dec 2025 00:00:00 GMT</pubDate>
+      <guid>stevewilldoit_youtube_2026</guid>
+      <outcomes>
+        <outcome probability="0.62">Yes</outcome>
+        <outcome probability="0.38">No</outcome>
+      </outcomes>
+      <resolution>
+        <type>binary</type>
+        <deadline>2026-01-01T23:59:59Z</deadline>
+        <rules>Market resolves YES if SteveWillDoIt's official YouTube channel (@SteveWillDoIt) is active, unbanned, and able to upload new content on or before January 1, 2026. Verification requires the channel to be publicly accessible and not showing a ban notice.</rules>
+      </resolution>
+    </item>
+  </channel>
+</rss>

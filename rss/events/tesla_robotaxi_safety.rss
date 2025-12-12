@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0">
+  <channel>
+    <title>Tesla Robotaxi Safety Improvement</title>
+    <link>https://www.objectwire.org/tesla-robotaxis-keep-crashing-despite-safety-monitors</link>
+    <description>Will Tesla Robotaxis reduce crash rate by 30% in 2026?</description>
+    <item>
+      <title>Will Tesla Robotaxis reduce crash rate by 30% in 2026?</title>
+      <description>Tesla's robotaxis continue experiencing crashes despite safety monitors. Market resolves YES if Tesla reports 30%+ reduction in crash rates for autonomous vehicles operating with safety monitors by December 31, 2026.</description>
+      <category>tech</category>
+      <source>objectwire.org</source>
+      <link>https://www.objectwire.org/tesla-robotaxis-keep-crashing-despite-safety-monitors</link>
+      <pubDate>Wed, 11 Dec 2025 00:00:00 GMT</pubDate>
+      <guid>tesla_robotaxi_safety_2026</guid>
+      <outcomes>
+        <outcome probability="0.38">Yes</outcome>
+        <outcome probability="0.62">No</outcome>
+      </outcomes>
+      <resolution>
+        <type>binary</type>
+        <deadline>2026-12-31T23:59:59Z</deadline>
+        <rules>Market resolves YES if Tesla publicly reports or regulatory filings show a 30% or greater reduction in crash rates per mile driven for robotaxi operations compared to Q4 2025 baseline. Data must come from official Tesla reports, NHTSA filings, or verified third-party safety audits.</rules>
+      </resolution>
+    </item>
+  </channel>
+</rss>

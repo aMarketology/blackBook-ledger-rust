@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0">
+  <channel>
+    <title>Pegatron Georgetown Investment</title>
+    <link>https://www.objectwire.org/pegatron-to-invest-35m-in-georgetown-facility</link>
+    <description>Will Pegatron invest $35M+ in Georgetown facility by end of 2026?</description>
+    <item>
+      <title>Will Pegatron invest $35M+ in Georgetown facility by end of 2026?</title>
+      <description>Pegatron announced plans to invest $35M in Georgetown facility expansion. The Taiwanese electronics manufacturer supplies major tech companies. Market resolves YES if investment completes by December 31, 2026.</description>
+      <category>business</category>
+      <source>objectwire.org</source>
+      <link>https://www.objectwire.org/pegatron-to-invest-35m-in-georgetown-facility</link>
+      <pubDate>Wed, 11 Dec 2025 00:00:00 GMT</pubDate>
+      <guid>pegatron_georgetown_2026</guid>
+      <outcomes>
+        <outcome probability="0.67">Yes</outcome>
+        <outcome probability="0.33">No</outcome>
+      </outcomes>
+      <resolution>
+        <type>binary</type>
+        <deadline>2026-12-31T23:59:59Z</deadline>
+        <rules>Market resolves YES if Pegatron completes $35M or more in capital investment at their Georgetown, Texas facility by December 31, 2026. Resolution requires official Pegatron announcements, Texas economic development records, or verified financial filings showing completion of the investment.</rules>
+      </resolution>
+    </item>
+  </channel>
+</rss>

@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0">
+  <channel>
+    <title>Ramaco Wyoming Rare Earth Mine</title>
+    <link>https://www.objectwire.org/ramaco-brook-mine-in-wyoming-is-the-first-rare-earth-mine-in-the-u-s-that-has-been-open-in-more-than-70-years-ramaco-brook-mine</link>
+    <description>Will Ramaco's Wyoming rare earth mine reach production by Dec 2026?</description>
+    <item>
+      <title>Will Ramaco's Wyoming rare earth mine reach production by Dec 2026?</title>
+      <description>Ramaco's Brook Mine in Wyoming is the first U.S. rare earth mine opened in 70+ years. Projected output: 1,242 tons of oxides annually from 2 million tons of coal. Market resolves YES if commercial production begins by end of 2026.</description>
+      <category>business</category>
+      <source>objectwire.org</source>
+      <link>https://www.objectwire.org/ramaco-brook-mine-in-wyoming-is-the-first-rare-earth-mine-in-the-u-s-that-has-been-open-in-more-than-70-years-ramaco-brook-mine</link>
+      <pubDate>Wed, 11 Dec 2025 00:00:00 GMT</pubDate>
+      <guid>ramaco_rare_earth_mine_2026</guid>
+      <outcomes>
+        <outcome probability="0.64">Yes</outcome>
+        <outcome probability="0.36">No</outcome>
+      </outcomes>
+      <resolution>
+        <type>binary</type>
+        <deadline>2026-12-31T23:59:59Z</deadline>
+        <rules>Market resolves YES if Ramaco's Brook Mine in Wyoming begins commercial production of rare earth oxides by December 31, 2026. Commercial production defined as consistent monthly extraction and processing of rare earth materials for sale. Resolution requires official Ramaco announcements or verified mining industry reports.</rules>
+      </resolution>
+    </item>
+  </channel>
+</rss>
