@@ -46,8 +46,8 @@ pub async fn connect_wallet(
         
         app_state.ledger.accounts.insert(username.clone(), payload.wallet_address.clone());
         
-        // Fund new account with initial balance (100 BB)
-        let initial_balance = 100.0;
+        // Fund new account with initial balance (30,000 BB - matches L1 for development)
+        let initial_balance = 30_000.0;
         match app_state.ledger.admin_mint_tokens(&username, initial_balance) {
             Ok(_) => {
                 println!("✅ Funded {} with {} BB", payload.wallet_address, initial_balance);
