@@ -505,6 +505,81 @@ impl L1RpcClient {
         
         Ok(result)
     }
+
+    /// Record a settlement using a full SettlementRequest (for batch settlements)
+    pub async fn record_batch_settlement(&self, request: SettlementRequest) -> Result<SettlementResponse, L1RpcError> {
+        if self.mock_mode {
+            println!("📝 [Mock] Batch settlement recorded: {} winners, merkle: {}", 
+                     request.winners.len(), 
+                     if request.l2_signature.len() >= 16 { &request.l2_signature[..16] } else { &request.l2_signature });
+            Ok(SettlementResponse {
+                recorded: true,
+                l1_tx_hash: Some(format!("mock_batch_tx_{}", uuid::Uuid::new_v4().simple())),
+                l1_slot: Some(request.l2_block_height),
+                error: None,
+            })
+        } else {
+            let url = format!("{}/rpc/settlement", self.endpoint_url.as_ref().unwrap());
+            
+            let response = self.client
+                .post(&url)
+                .json(&request)
+                .send()
+                .await
+                .map_err(|e| L1RpcError::RequestFailed(e.to_string()))?;
+            
+            if !response.status().is_success() {
+                return Err(L1RpcError::RequestFailed(
+                    format!("L1 returned status {}", response.status())
+                ));
+            }
+            
+            let result: SettlementResponse = response
+                .json()
+                .await
+                .map_err(|e| L1RpcError::InvalidResponse(e.to_string()))?;
+            
+            Ok(result)
+        }
+    }
+
+    /// Get current L1 slot/block height
+    pub async fn get_current_slot(&self) -> Result<u64, L1RpcError> {
+        if self.mock_mode {
+            // In mock mode, return a pseudo-slot based on time
+            let now = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_secs();
+            Ok(now / 2) // Roughly 2-second slots
+        } else {
+            let url = format!("{}/rpc/slot", self.endpoint_url.as_ref().unwrap());
+            
+            let response = self.client
+                .get(&url)
+                .send()
+                .await
+                .map_err(|e| L1RpcError::RequestFailed(e.to_string()))?;
+            
+            if !response.status().is_success() {
+                return Err(L1RpcError::RequestFailed(
+                    format!("L1 returned status {}", response.status())
+                ));
+            }
+            
+            #[derive(Deserialize)]
+            struct SlotResponse {
+                slot: u64,
+            }
+            
+            let result: SlotResponse = response
+                .json()
+                .await
+                .map_err(|e| L1RpcError::InvalidResponse(e.to_string()))?;
+            
+            Ok(result.slot)
+        }
+    }
 }
 
 impl Default for L1RpcClient {

@@ -19,6 +19,8 @@ mod models;
 mod app_state;
 mod handlers;
 mod routes;
+mod optimistic_ledger;
+mod l1_sync;
 
 #[path = "../rss/mod.rs"]
 mod rss;
@@ -59,8 +61,14 @@ async fn main() {
         
         // ===== LEDGER ENDPOINTS =====
         .route("/balance/:account", get(get_balance))
+        .route("/balance/details/:account", get(get_balance_details))  // Hybrid balance details
         .route("/transfer", post(transfer))
         .route("/ledger", get(get_ledger_activity))
+        
+        // ===== HYBRID L1/L2 SETTLEMENT ENDPOINTS =====
+        .route("/settle", post(settle_to_l1))              // Trigger batch settlement
+        .route("/settle/status", get(get_settlement_status)) // Get settlement status
+        .route("/sync", post(sync_from_l1))                 // Sync balances from L1
         
         // ===== RPC ENDPOINTS =====
         .route("/rpc/nonce/:address", get(get_nonce))
@@ -95,9 +103,15 @@ async fn main() {
     println!("   POST /rpc/submit        - Place bet (SDK alias)");
     println!("   GET  /bets/:account     - Get user bet history");
     println!("   GET  /balance/:account  - Get account balance");
+    println!("   GET  /balance/details/:account - Get detailed balance (L1/L2)");
     println!("   POST /transfer          - Transfer tokens");
     println!("   GET  /ledger            - View blockchain activity");
     println!("   GET  /rpc/nonce/:addr   - Get nonce for signing");
+    println!("");
+    println!("   ═══ HYBRID L1/L2 SETTLEMENT ═══");
+    println!("   POST /settle            - Submit pending bets to L1");
+    println!("   GET  /settle/status     - Get settlement status");
+    println!("   POST /sync              - Sync balances from L1");
     println!("\n📡 Cryptographic signatures only - No JWT required\n");
 
     // Setup graceful shutdown

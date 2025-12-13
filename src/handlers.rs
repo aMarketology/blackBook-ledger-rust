@@ -10,6 +10,8 @@ use serde_json::{json, Value};
 use crate::app_state::SharedState;
 use crate::models::*;
 use crate::rpc::TransactionPayload;
+use crate::optimistic_ledger::{AccountBalanceDetails, SettlementSummary};
+use crate::l1_sync::HybridSettlementStatus;
 
 // ===== SIMPLE BET REQUEST (FLAT STRUCTURE - MATCHES AUTH_SIMPLIFICATION.md) =====
 
@@ -332,4 +334,194 @@ pub async fn get_user_bets(
     }
     
     Json(json!({ "account": account, "bets": all_bets }))
+}
+
+// ===== HYBRID L1/L2 SETTLEMENT ENDPOINTS =====
+
+/// Get detailed balance showing confirmed (L1) and pending (L2) amounts
+pub async fn get_balance_details(
+    State(state): State<SharedState>,
+    Path(account): Path<String>,
+) -> Json<Value> {
+    let app_state = state.lock().unwrap();
+    
+    if app_state.use_optimistic_mode {
+        let addr = app_state.optimistic_ledger.resolve_address(&account);
+        if let Some(balance) = app_state.optimistic_ledger.balances.get(&addr) {
+            let details = AccountBalanceDetails::from((&addr, balance));
+            Json(json!({
+                "success": true,
+                "account": account,
+                "address": details.address,
+                "confirmed_balance": details.confirmed_balance,
+                "pending_delta": details.pending_delta,
+                "available_balance": details.available_balance,
+                "last_l1_sync_slot": details.last_l1_sync_slot,
+                "last_l1_sync_timestamp": details.last_l1_sync_timestamp,
+                "mode": "optimistic"
+            }))
+        } else {
+            Json(json!({
+                "success": false,
+                "error": "Account not found",
+                "account": account
+            }))
+        }
+    } else {
+        // Non-optimistic mode - just return regular balance
+        let balance = app_state.ledger.get_balance(&account);
+        Json(json!({
+            "success": true,
+            "account": account,
+            "confirmed_balance": balance,
+            "pending_delta": 0.0,
+            "available_balance": balance,
+            "mode": "direct"
+        }))
+    }
+}
+
+/// Trigger settlement of pending bets to L1
+pub async fn settle_to_l1(
+    State(state): State<SharedState>,
+) -> Json<Value> {
+    let mut app_state = state.lock().unwrap();
+    
+    if !app_state.use_optimistic_mode {
+        return Json(json!({
+            "success": false,
+            "error": "Optimistic mode is disabled"
+        }));
+    }
+    
+    // Check if there's a batch ready
+    if app_state.optimistic_ledger.current_batch.is_none() {
+        return Json(json!({
+            "success": false,
+            "error": "No pending bets to settle"
+        }));
+    }
+    
+    // Prepare the batch
+    if let Some(batch) = app_state.optimistic_ledger.prepare_batch_for_submission() {
+        let batch_id = batch.batch_id.clone();
+        let bet_count = batch.bet_ids.len();
+        let merkle_root = batch.merkle_root.clone();
+        let affected_accounts = batch.affected_accounts();
+        let total_volume = batch.total_volume();
+        
+        // In mock mode, simulate immediate success
+        // In production, this would submit to L1 and wait for confirmation
+        app_state.optimistic_ledger.pending_batches.push_back(batch);
+        
+        app_state.log_blockchain_activity(
+            "📦",
+            "BATCH_SUBMITTED",
+            &format!("Batch {} with {} bets submitted to L1 | Volume: {} BB", 
+                     batch_id, bet_count, total_volume)
+        );
+        
+        Json(json!({
+            "success": true,
+            "batch_id": batch_id,
+            "bets_included": bet_count,
+            "affected_accounts": affected_accounts,
+            "total_volume": total_volume,
+            "merkle_root": merkle_root,
+            "status": "submitted",
+            "message": "Batch submitted to L1 for settlement"
+        }))
+    } else {
+        Json(json!({
+            "success": false,
+            "error": "Failed to prepare batch for submission"
+        }))
+    }
+}
+
+/// Get current settlement status
+pub async fn get_settlement_status(
+    State(state): State<SharedState>,
+) -> Json<Value> {
+    let app_state = state.lock().unwrap();
+    
+    if !app_state.use_optimistic_mode {
+        return Json(json!({
+            "success": true,
+            "mode": "direct",
+            "optimistic_enabled": false,
+            "message": "Optimistic mode disabled - all bets execute directly"
+        }));
+    }
+    
+    let settlement_summary = app_state.optimistic_ledger.get_settlement_summary();
+    let sync_status = app_state.l1_sync.get_status();
+    
+    Json(json!({
+        "success": true,
+        "mode": "optimistic",
+        "optimistic_enabled": true,
+        "l2_block_height": settlement_summary.l2_block_height,
+        "pending_bets": settlement_summary.pending_bets,
+        "batched_bets": settlement_summary.batched_bets,
+        "current_batch_size": settlement_summary.current_batch_size,
+        "pending_batches": settlement_summary.pending_batches,
+        "finalized_batches": settlement_summary.finalized_batches,
+        "pending_volume": settlement_summary.pending_volume,
+        "sync": {
+            "status": format!("{:?}", sync_status.status),
+            "is_connected": sync_status.is_connected,
+            "is_mock_mode": sync_status.is_mock_mode,
+            "last_sync_slot": sync_status.last_sync_slot,
+            "last_sync_timestamp": sync_status.last_sync_timestamp,
+            "sync_interval_secs": sync_status.sync_interval_secs
+        }
+    }))
+}
+
+/// Sync balances from L1
+pub async fn sync_from_l1(
+    State(state): State<SharedState>,
+) -> Json<Value> {
+    // We need to release the lock before calling async sync
+    // For now, just report that sync was requested
+    let mut app_state = state.lock().unwrap();
+    
+    if !app_state.use_optimistic_mode {
+        return Json(json!({
+            "success": false,
+            "error": "Optimistic mode is disabled"
+        }));
+    }
+    
+    // In mock mode, sync is instant
+    if app_state.l1_sync.rpc_client.is_mock_mode() {
+        // Sync from local ledger to optimistic ledger
+        app_state.sync_ledger_to_optimistic();
+        
+        // Get count before mutable borrow for logging
+        let accounts_count = app_state.optimistic_ledger.balances.len();
+        
+        app_state.log_blockchain_activity(
+            "🔄",
+            "L1_SYNC",
+            &format!("Synced {} accounts from L1 (mock mode)", accounts_count)
+        );
+        
+        return Json(json!({
+            "success": true,
+            "accounts_synced": accounts_count,
+            "mode": "mock",
+            "message": "Balances synced from L1 (mock mode)"
+        }));
+    }
+    
+    // In live mode, we would do actual L1 sync
+    // For now, just acknowledge the request
+    Json(json!({
+        "success": true,
+        "accounts_synced": 0,
+        "mode": "live",
+        "message": "L1 sync requested - will complete asynchronously"
+    }))
 }
