@@ -39,15 +39,16 @@ pub async fn connect_wallet(
     if !balance_exists {
         println!("🆕 New wallet detected: {}", payload.wallet_address);
         
-        // Add wallet to ledger accounts
+        // Add wallet to ledger accounts (UPPERCASE for consistency with resolve_address)
         let username = payload.username.clone()
-            .unwrap_or_else(|| format!("user_{}", &payload.wallet_address[3..11]));
+            .unwrap_or_else(|| format!("user_{}", &payload.wallet_address[3..11]))
+            .to_uppercase();
         
         app_state.ledger.accounts.insert(username.clone(), payload.wallet_address.clone());
         
         // Fund new account with initial balance (100 BB)
         let initial_balance = 100.0;
-        match app_state.ledger.admin_mint_tokens(&payload.wallet_address, initial_balance) {
+        match app_state.ledger.admin_mint_tokens(&username, initial_balance) {
             Ok(_) => {
                 println!("✅ Funded {} with {} BB", payload.wallet_address, initial_balance);
                 

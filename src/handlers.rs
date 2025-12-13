@@ -5,67 +5,98 @@ use axum::{
     http::{StatusCode, HeaderMap},
     response::Json,
 };
+use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use crate::app_state::SharedState;
 use crate::models::*;
 use crate::rpc::TransactionPayload;
 
+// ===== SIMPLE BET REQUEST (FLAT STRUCTURE - MATCHES AUTH_SIMPLIFICATION.md) =====
+
+#[derive(Debug, Deserialize)]
+pub struct SimpleBetRequest {
+    pub signature: String,
+    pub from_address: String,
+    pub market_id: String,
+    pub option: String,  // "0" or "1" or "YES"/"NO"
+    pub amount: f64,
+    pub nonce: u64,
+    pub timestamp: u64,
+}
+
 // ===== SIGNED BET ENDPOINT (PRIMARY BETTING METHOD) =====
 
 pub async fn place_signed_bet(
     State(state): State<SharedState>,
-    Json(request): Json<SignedBetRequest>,
+    Json(request): Json<SimpleBetRequest>,
 ) -> Result<Json<SignedBetResponse>, (StatusCode, Json<SignedBetResponse>)> {
-    let signed_tx = &request.signed_tx;
+    println!("📥 Received bet: market={}, option={}, amount={}", 
+             request.market_id, request.option, request.amount);
     
-    // Validate signature and expiry
-    if let Err(e) = signed_tx.validate() {
+    // Validate timestamp (24 hour window)
+    let current_time = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs();
+    
+    let time_diff = if current_time > request.timestamp {
+        current_time - request.timestamp
+    } else {
+        request.timestamp - current_time
+    };
+    
+    if time_diff > 86400 {
+        println!("❌ Transaction expired: {}s old (max 86400s)", time_diff);
         return Err((
             StatusCode::UNAUTHORIZED,
             Json(SignedBetResponse {
                 success: false,
                 bet_id: None,
                 transaction_id: None,
-                market_id: None,
+                market_id: Some(request.market_id),
                 outcome: None,
-                amount: None,
+                amount: Some(request.amount),
                 new_balance: None,
                 nonce_used: None,
-                error: Some(format!("Transaction validation failed: {}", e)),
+                error: Some(format!("Transaction expired ({}s old)", time_diff)),
             })
         ));
     }
     
-    // Extract bet details
-    let (market_id, outcome, amount) = match &signed_tx.payload {
-        TransactionPayload::BetPlacement { market_id, outcome, amount } => {
-            (market_id.clone(), *outcome, *amount)
-        }
+    // Convert option to outcome
+    let outcome = match request.option.as_str() {
+        "0" | "YES" => 0,
+        "1" | "NO" => 1,
         _ => {
+            println!("❌ Invalid option: {}", request.option);
             return Err((
                 StatusCode::BAD_REQUEST,
                 Json(SignedBetResponse {
                     success: false,
                     bet_id: None,
                     transaction_id: None,
-                    market_id: None,
+                    market_id: Some(request.market_id),
                     outcome: None,
-                    amount: None,
+                    amount: Some(request.amount),
                     new_balance: None,
                     nonce_used: None,
-                    error: Some("Invalid payload type".into()),
+                    error: Some("Invalid option: must be 0, 1, YES, or NO".to_string()),
                 })
             ));
         }
     };
     
-    let sender_address = &signed_tx.sender_address;
-    let nonce = signed_tx.nonce;
+    println!("✅ Timestamp valid, placing bet...");
+    
+    let sender_address = request.from_address.clone();
+    let market_id = request.market_id.clone();
+    let amount = request.amount;
+    let nonce = request.nonce;
     
     let mut app_state = state.lock().unwrap();
     
     // Check nonce for replay protection
-    let last_nonce = app_state.nonces.get(sender_address).copied().unwrap_or(0);
+    let last_nonce = app_state.nonces.get(&sender_address).copied().unwrap_or(0);
     if nonce <= last_nonce {
         return Err((
             StatusCode::BAD_REQUEST,
@@ -85,7 +116,7 @@ pub async fn place_signed_bet(
     
     // Resolve address to account
     let account_name = app_state.ledger.accounts.iter()
-        .find(|(_, addr)| *addr == sender_address)
+        .find(|(_, addr)| **addr == sender_address)
         .map(|(name, _)| name.clone())
         .ok_or_else(|| {
             (

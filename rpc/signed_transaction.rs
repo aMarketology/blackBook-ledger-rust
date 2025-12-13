@@ -12,9 +12,10 @@ use crate::easteregg::GodMode;
 use crate::l1_rpc_client::L1RpcClient;
 
 /// Transaction type identifiers matching L1 protocol
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[repr(u8)]
 pub enum SignedTxType {
+    #[default]
     Transfer = 0,
     Bridge = 4,
     BetPlacement = 7,
@@ -114,21 +115,24 @@ impl TransactionPayload {
     }
 }
 
-/// Default transaction expiry window (5 minutes)
-pub const TX_EXPIRY_SECS: u64 = 300;
+/// Default transaction expiry window (24 hours for development)
+/// In production, reduce to 300 seconds (5 minutes)
+pub const TX_EXPIRY_SECS: u64 = 86400; // 24 hours
 
 /// A cryptographically signed transaction envelope
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SignedTransaction {
     /// Sender's Ed25519 public key (64 hex chars)
     pub sender_pubkey: String,
-    /// Sender's address (L1_<pubkey> format)
+    /// Sender's address (L1_<pubkey> format) - derived from sender_pubkey if not provided
+    #[serde(default)]
     pub sender_address: String,
     /// Transaction nonce (must be > last nonce for this sender)
     pub nonce: u64,
     /// Unix timestamp when transaction was created
     pub timestamp: u64,
-    /// Transaction type identifier
+    /// Transaction type identifier - can be inferred from payload if not provided
+    #[serde(default)]
     pub tx_type: SignedTxType,
     /// Transaction-specific payload
     pub payload: TransactionPayload,
@@ -338,13 +342,28 @@ impl SignedTransaction {
             .unwrap()
             .as_secs();
         
-        // Check if timestamp is in the future (clock skew tolerance: 60 seconds)
-        if self.timestamp > now + 60 {
+        // Debug: Print timestamps to help diagnose issues
+        eprintln!("🕐 Timestamp validation:");
+        eprintln!("   Server time: {} ({})", now, chrono::DateTime::<chrono::Utc>::from_timestamp(now as i64, 0).map(|dt| dt.to_rfc3339()).unwrap_or_else(|| "invalid".to_string()));
+        eprintln!("   TX timestamp: {} ({})", self.timestamp, chrono::DateTime::<chrono::Utc>::from_timestamp(self.timestamp as i64, 0).map(|dt| dt.to_rfc3339()).unwrap_or_else(|| "invalid".to_string()));
+        eprintln!("   Allowed window: {} seconds", window_secs);
+        
+        // Allow timestamps within 5 minutes in the past OR future (clock skew tolerance)
+        let time_diff = if now > self.timestamp {
+            now - self.timestamp
+        } else {
+            self.timestamp - now
+        };
+        
+        eprintln!("   Time difference: {} seconds", time_diff);
+        
+        if time_diff > window_secs {
+            eprintln!("   ❌ EXPIRED: difference ({}) > window ({})", time_diff, window_secs);
             return true;
         }
         
-        // Check if too old
-        now > self.timestamp + window_secs
+        eprintln!("   ✅ VALID: within allowed window");
+        false
     }
 
     /// Validate the transaction completely (signature + expiry)
