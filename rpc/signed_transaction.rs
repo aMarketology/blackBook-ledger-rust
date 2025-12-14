@@ -9,7 +9,6 @@ use sha2::{Sha256, Digest};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::easteregg::GodMode;
-use crate::l1_rpc_client::L1RpcClient;
 
 /// Transaction type identifiers matching L1 protocol
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
@@ -314,18 +313,14 @@ impl SignedTransaction {
         }
     }
 
-    /// Verify the signature via L1 RPC (for cross-layer validation)
-    pub async fn verify_with_l1(&self, client: &L1RpcClient) -> Result<bool, SignedTxError> {
+    /// Verify the signature (simplified - uses local Ed25519 verification)
+    pub async fn verify_with_l1(&self) -> Result<bool, SignedTxError> {
         // Check type matches payload
         if self.tx_type != self.payload.tx_type() {
             return Err(SignedTxError::TypeMismatch);
         }
-
-        let signing_bytes = self.to_signing_bytes();
-        
-        client.verify_signature(&self.sender_pubkey, &signing_bytes, &self.signature)
-            .await
-            .map_err(|e| SignedTxError::L1VerificationFailed(e.to_string()))
+        // Just use local verification
+        self.verify()
     }
 
     /// Check if the transaction has expired
@@ -378,13 +373,13 @@ impl SignedTransaction {
         }
     }
 
-    /// Validate with L1 verification
-    pub async fn validate_with_l1(&self, client: &L1RpcClient) -> Result<(), SignedTxError> {
+    /// Validate with L1 verification (simplified)
+    pub async fn validate_with_l1(&self) -> Result<(), SignedTxError> {
         if self.is_expired() {
             return Err(SignedTxError::Expired);
         }
 
-        match self.verify_with_l1(client).await? {
+        match self.verify_with_l1().await? {
             true => Ok(()),
             false => Err(SignedTxError::SignatureMismatch),
         }
@@ -660,7 +655,6 @@ mod tests {
     #[tokio::test]
     async fn test_verify_with_l1_mock() {
         let godmode = GodMode::new();
-        let client = L1RpcClient::new(None); // Mock mode when no URL
         let bob = godmode.get_account("BOB").unwrap();
         
         let payload = TransactionPayload::Transfer {
@@ -671,7 +665,7 @@ mod tests {
         let tx = SignedTransaction::new(&godmode, "ALICE", 1, payload)
             .expect("Should create transaction");
 
-        let valid = tx.verify_with_l1(&client).await
+        let valid = tx.verify_with_l1().await
             .expect("Should verify with L1");
         
         assert!(valid, "Should verify via L1 mock");
@@ -680,7 +674,6 @@ mod tests {
     #[tokio::test]
     async fn test_validate_with_l1_mock() {
         let godmode = GodMode::new();
-        let client = L1RpcClient::new(None); // Mock mode when no URL
         
         let payload = TransactionPayload::BetPlacement {
             market_id: "test_market".into(),
@@ -691,7 +684,8 @@ mod tests {
         let tx = SignedTransaction::new(&godmode, "DIANA", 1, payload)
             .expect("Should create transaction");
 
-        tx.validate_with_l1(&client).await
+        tx.validate_with_l1().await
             .expect("Should validate with L1");
     }
 }
+

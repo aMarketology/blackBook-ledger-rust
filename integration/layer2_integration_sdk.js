@@ -1,7 +1,9 @@
 // ============================================================================
 // Layer 2 Prediction Market - Integration SDK
 // ============================================================================
-//
+
+import nacl from 'tweetnacl';
+
 // Production-ready SDK for frontend betting integration.
 // Supports 2 authentication modes:
 //   1. Supabase JWT - Production auth via L1 wallet lookup
@@ -94,6 +96,189 @@ class PredictionMarket {
   }
 
   // ==========================================================================
+  // CRYPTOGRAPHY - Ed25519 Signing (Production)
+  // ==========================================================================
+
+  /**
+   * Set private key from hex string and derive public key
+   * @param {string} privateKeyHex - 64-char hex private key (32-byte seed)
+   */
+  setPrivateKey(privateKeyHex) {
+    // Validate hex string (32 bytes = 64 hex chars)
+    if (!/^[0-9a-fA-F]{64}$/.test(privateKeyHex)) {
+      throw new Error('Invalid private key format. Must be 64-character hex string (32 bytes).');
+    }
+
+    // Convert hex to Uint8Array
+    const seed = hexToBytes(privateKeyHex);
+
+    // Derive keypair from seed
+    // nacl.sign.keyPair.fromSeed takes a 32-byte seed and returns { publicKey, secretKey }
+    const keyPair = nacl.sign.keyPair.fromSeed(seed);
+    
+    this.privateKey = keyPair.secretKey; // Full 64-byte secret key (seed + public)
+    this.publicKey = bytesToHex(keyPair.publicKey); // 32-byte public key as hex
+    
+    console.log(`✅ Private key set. Public Key: ${this.publicKey}`);
+    return this.publicKey;
+  }
+
+  /**
+   * Generate a new random keypair
+   * @returns {Object} { publicKey: hex, privateKey: hex (seed only) }
+   */
+  generateKeypair() {
+    const keyPair = nacl.sign.keyPair();
+    
+    this.privateKey = keyPair.secretKey;
+    this.publicKey = bytesToHex(keyPair.publicKey);
+    
+    // Return the seed (first 32 bytes of secretKey) for storage
+    const seed = keyPair.secretKey.slice(0, 32);
+    
+    console.log(`✅ New keypair generated. Public Key: ${this.publicKey}`);
+    return {
+      publicKey: this.publicKey,
+      privateKey: bytesToHex(seed) // Return seed for secure storage
+    };
+  }
+
+  /**
+   * Sign a message with the stored private key (Ed25519)
+   * @param {string|Uint8Array} message - Message to sign
+   * @returns {string} 128-character hex signature (64 bytes)
+   */
+  signMessage(message) {
+    if (!this.privateKey) {
+      throw new Error('Private key not set. Call setPrivateKey() or generateKeypair() first.');
+    }
+
+    let messageBytes;
+    if (typeof message === 'string') {
+      messageBytes = new TextEncoder().encode(message);
+    } else if (message instanceof Uint8Array) {
+      messageBytes = message;
+    } else {
+      throw new Error('Message must be string or Uint8Array');
+    }
+
+    // 🔍 DETAILED DEBUG OUTPUT
+    console.log('========================================');
+    console.log('[signMessage] 🔏 SIGNING DEBUG:');
+    console.log('   Message to sign:', typeof message === 'string' ? message : '(Uint8Array)');
+    console.log('   Message bytes length:', messageBytes.length);
+    console.log('   Private key length:', this.privateKey.length, '(should be 64)');
+    console.log('   Public key (hex):', this.publicKey || 'NOT SET');
+    console.log('   Wallet address:', this.walletAddress || 'NOT SET');
+    
+    const signatureBytes = nacl.sign.detached(messageBytes, this.privateKey);
+    const signatureHex = bytesToHex(signatureBytes);
+    
+    console.log('   Signature (hex):', signatureHex);
+    console.log('   Signature length:', signatureHex.length, '(should be 128)');
+    
+    // 🧪 LOCAL VERIFICATION TEST
+    const pubKeyBytes = hexToBytes(this.publicKey);
+    const localVerify = nacl.sign.detached.verify(messageBytes, signatureBytes, pubKeyBytes);
+    console.log('   🧪 LOCAL VERIFY:', localVerify ? '✅ PASS' : '❌ FAIL');
+    
+    if (!localVerify) {
+      console.error('   ❌ KEY MISMATCH! The publicKey does not match the privateKey!');
+      console.error('      This signature WILL BE REJECTED by any server.');
+    }
+    console.log('========================================');
+    
+    return signatureHex;
+  }
+
+  /**
+   * Verify a signature (for testing)
+   * @param {string} message - Original message
+   * @param {string} signatureHex - 128-char hex signature
+   * @param {string} publicKeyHex - 64-char hex public key
+   * @returns {boolean} True if valid
+   */
+  verifySignature(message, signatureHex, publicKeyHex = null) {
+    const pubKey = publicKeyHex ? hexToBytes(publicKeyHex) : hexToBytes(this.publicKey);
+    const signature = hexToBytes(signatureHex);
+    const messageBytes = typeof message === 'string' 
+      ? new TextEncoder().encode(message) 
+      : message;
+    
+    return nacl.sign.detached.verify(messageBytes, signature, pubKey);
+  }
+
+  // ==========================================================================
+  // PATH B: SignedRequest Helpers (Decoupled Identity)
+  // ==========================================================================
+  //
+  // Path B separates:
+  // - wallet_address (L1...) = used for balance operations (stored in Supabase)
+  // - public_key (64-char hex) = used for signature verification
+  //
+  // This allows the L1... address to be a short, human-readable identifier
+  // while the public_key is used for cryptographic operations.
+  // ==========================================================================
+
+  /**
+   * Create a SignedRequest object for L1 API calls
+   * This is the standard format L1 expects for authenticated requests
+   * 
+   * Format:
+   * {
+   *   public_key: "64-char hex",      // For signature verification
+   *   wallet_address: "L1...",        // For balance operations (Path B)
+   *   payload: "JSON string",         // The actual request data
+   *   timestamp: 1234567890,          // Unix timestamp
+   *   nonce: "random-string",         // Replay protection
+   *   signature: "128-char hex"       // Signs: payload\ntimestamp\nnonce
+   * }
+   * 
+   * @param {Object} payload - The request payload object
+   * @returns {Object} SignedRequest object ready to send to L1
+   */
+  createSignedRequest(payload) {
+    if (!this.privateKey || !this.publicKey) {
+      throw new Error('Private key not set. Call setPrivateKey() or generateKeypair() first.');
+    }
+
+    const timestamp = getTimestamp();
+    const nonce = generateNonce();
+    const payloadJson = JSON.stringify(payload);
+    
+    // Create the signed content: payload\ntimestamp\nnonce
+    const signedContent = `${payloadJson}\n${timestamp}\n${nonce}`;
+    const signature = this.signMessage(signedContent);
+    
+    return {
+      public_key: this.publicKey,           // 64-char hex - for signature verification
+      wallet_address: this.walletAddress,   // L1... address - for balance operations (Path B)
+      payload: payloadJson,                 // JSON string of the actual request
+      timestamp: timestamp,
+      nonce: nonce,
+      signature: signature                  // Signs: payload\ntimestamp\nnonce
+    };
+  }
+
+  /**
+   * Get the data needed to sync public_key to Supabase
+   * Frontend should call this and update Supabase profiles table:
+   *   UPDATE profiles SET public_key = ? WHERE blackbook_address = ?
+   * 
+   * @returns {Object} { wallet_address, public_key } to save to Supabase
+   */
+  getPublicKeyForSync() {
+    if (!this.publicKey) {
+      throw new Error('No public key available. Generate or load a keypair first.');
+    }
+    
+    return {
+      wallet_address: this.walletAddress,
+      public_key: this.publicKey
+    };
+  }
+
+  // ==========================================================================
   // AUTHENTICATION - Supabase JWT (Production)
   // ==========================================================================
 
@@ -132,10 +317,22 @@ class PredictionMarket {
     const data = await response.json();
 
     if (data.success && data.wallet_address) {
-      this.walletAddress = data.wallet_address;
+      // ⚠️ CRITICAL FIX: Check for Identity Mismatch
+      // If we have a local private key, we MUST use its address, otherwise signing fails.
+      if (this.publicKey && this.publicKey !== data.wallet_address) {
+        console.warn(`⚠️ WALLET MISMATCH DETECTED`);
+        console.warn(`   Supabase Account: ${data.wallet_address}`);
+        console.warn(`   Local Signing Key: ${this.publicKey}`);
+        console.warn(`   -> Using LOCAL KEY to ensure transactions work.`);
+        
+        this.walletAddress = this.publicKey; // Override with the key we actually possess
+      } else {
+        this.walletAddress = data.wallet_address;
+      }
+
       this.connectedAccount = {
         name: 'SUPABASE_USER',
-        address: data.wallet_address,
+        address: this.walletAddress,
         user_id: data.user_id
       };
       console.log(`✅ Logged in: ${data.wallet_address} (${data.balance} BB)`);
@@ -151,6 +348,62 @@ class PredictionMarket {
     }
 
     return data;
+  }
+
+  /**
+   * Login with Supabase JWT and auto-deposit L1 funds to L2 ("Session Deposit" flow)
+   * 
+   * This provides a seamless UX where:
+   * 1. User logs in
+   * 2. SDK checks L1 balance
+   * 3. If L1 > 0: Automatically bridges all funds to L2
+   * 4. User can bet instantly with zero friction
+   * 
+   * @param {string} jwt - Supabase JWT token
+   * @param {string} username - Optional username for lookup
+   * @param {Object} options - Options for auto-deposit
+   * @param {boolean} options.autoDeposit - Whether to auto-bridge L1 to L2 (default: true)
+   * @param {number} options.reserveAmount - Amount to keep in L1 vault (default: 0)
+   * @returns {Promise<Object>} Login response with wallet, balance, and bridge info
+   */
+  async loginWithAutoDeposit(jwt, username = null, options = {}) {
+    const { autoDeposit = true, reserveAmount = 0 } = options;
+
+    // Step 1: Standard login
+    const loginResult = await this.loginWithSupabase(jwt, username);
+    
+    if (!loginResult.success || !this.walletAddress) {
+      return loginResult;
+    }
+
+    // Step 2: Get full balance (L1 + L2)
+    const balances = await this.getFullBalance();
+    console.log(`💰 Balances - L1 Vault: ${balances.l1_balance} BB, L2 Hot: ${balances.l2_balance} BB`);
+
+    // Step 3: Auto-deposit if enabled and L1 has funds
+    let bridgeResult = null;
+    if (autoDeposit && balances.l1_balance > reserveAmount) {
+      const amountToBridge = balances.l1_balance - reserveAmount;
+      console.log(`🌉 Auto-depositing ${amountToBridge} BB from L1 Vault to L2 Hot wallet...`);
+      
+      bridgeResult = await this.bridgeToL2(amountToBridge);
+      
+      if (bridgeResult.success) {
+        console.log(`✅ Session deposit complete! ${amountToBridge} BB now ready for betting.`);
+      } else {
+        console.warn(`⚠️ Auto-deposit failed: ${bridgeResult.error}. Manual bridge may be needed.`);
+      }
+    }
+
+    // Step 4: Get updated unified balance
+    const unifiedBalance = await this.getUnifiedBalance();
+
+    return {
+      ...loginResult,
+      auto_deposit: bridgeResult,
+      unified_balance: unifiedBalance,
+      ready_to_bet: unifiedBalance.available > 0
+    };
   }
 
   /**
@@ -442,6 +695,63 @@ class PredictionMarket {
         // Continue anyway - the address might already exist
       }
 
+      // ==================================================================
+      // 🧠 SMART BETTING LOGIC (Auto-Bridge / Optimistic Bridging)
+      // ==================================================================
+      // Instead of blocking the user, we automatically bridge funds from
+      // L1 (Vault) to L2 (Hot) when L2 balance is insufficient.
+      // This makes L1 and L2 feel like a single unified balance.
+      // ==================================================================
+      
+      // 1. Check current L2 Balance (Fast)
+      const l2Status = await this.getBalance(this.walletAddress);
+      const currentL2Balance = l2Status.balance || 0;
+
+      // 2. If we don't have enough chips on the table, check vault
+      if (currentL2Balance < amount) {
+        const deficit = amount - currentL2Balance;
+        console.log(`📉 Low L2 Balance (${currentL2Balance} BB). Need ${amount} BB. Deficit: ${deficit} BB`);
+
+        // 3. Check the Vault (L1)
+        const l1Status = await this.getL1Balance(this.walletAddress);
+        const currentL1Balance = l1Status.balance || 0;
+
+        // 4. If Vault has enough, auto-bridge!
+        if (currentL1Balance >= deficit) {
+          console.log(`🏦 Found funds in L1 Vault (${currentL1Balance} BB). Auto-bridging ${deficit} BB...`);
+          
+          // OPTIMISTIC BRIDGE: Initiate bridge and wait briefly for L2 credit
+          // In a full optimistic setup, we'd send the bridge signature with the bet
+          // and L2 would credit instantly, trusting L1 confirmation will follow
+          const bridgeResult = await this.bridgeToL2(deficit);
+          
+          if (!bridgeResult.success) {
+            return { 
+              success: false, 
+              error: `Auto-bridge failed: ${bridgeResult.error}`,
+              auto_bridge_attempted: true
+            };
+          }
+
+          // Wait briefly for L2 to credit (simulated optimistic latency)
+          // Production: L2 verifies signature is valid and credits instantly
+          await new Promise(resolve => setTimeout(resolve, 500));
+          console.log('✅ Auto-bridge complete. Proceeding with bet...');
+        } else {
+          // Truly insufficient funds (neither L1 nor L2 has enough)
+          const totalAvailable = currentL1Balance + currentL2Balance;
+          return { 
+            success: false, 
+            error: `Insufficient funds. Available: ${totalAvailable} BB (L2: ${currentL2Balance}, Vault: ${currentL1Balance}). Need: ${amount} BB`,
+            l2_balance: currentL2Balance,
+            l1_balance: currentL1Balance,
+            total_available: totalAvailable,
+            amount_needed: amount,
+            deficit: amount - totalAvailable
+          };
+        }
+      }
+
       // ✅ STEP 2: Fetch current nonce from the API
       const fetchedNonce = await this.fetchNonce(this.walletAddress);
       // Ensure nonce is a simple number (u64), not an object
@@ -454,18 +764,35 @@ class PredictionMarket {
       const nextNonce = currentNonce + 1;
       const timestamp = getTimestamp();
 
-      // Generate signature if not provided
-      const sig = signature || `sig_${this.walletAddress.slice(0, 8)}_${timestamp.toString(16)}`;
+      // Create the message to sign
+      const betMessage = `bet:${this.walletAddress}:${marketId}:${outcome}:${amount}:${timestamp}:${nextNonce}`;
+
+      // Generate signature using real Ed25519 signing
+      let sig;
+      if (signature) {
+        // External signature provided
+        sig = signature;
+      } else if (this.privateKey) {
+        // ✅ PRODUCTION: Use real Ed25519 signing
+        sig = this.signMessage(betMessage);
+        console.log(`🔏 Bet signed: ${sig.slice(0, 32)}...`);
+      } else {
+        // ⚠️ DEV FALLBACK: Mock signature (L2 may accept for dev, L1 will reject)
+        console.warn('⚠️ No private key set! Using mock signature.');
+        sig = '0'.repeat(128);
+      }
 
       // ✅ NEW FORMAT (simple flat structure)
       const body = {
         signature: sig,
+        public_key: this.publicKey || '0000000000000000000000000000000000000000000000000000000000000000',
         from_address: this.walletAddress,
         market_id: marketId,
         option: String(outcome),  // Must be string: "0" or "1"
         amount: parseFloat(amount),
         nonce: nextNonce,  // ✅ Send incremented nonce
-        timestamp: timestamp
+        timestamp: timestamp,
+        payload: betMessage  // Include signed message for verification
       };
 
       console.log('📤 Placing bet with nonce:', nextNonce);
@@ -1255,6 +1582,10 @@ class PredictionMarket {
    * 2. L1 creates a pending bridge record
    * 3. L2 polls or gets notified to credit the user
    * 
+   * Uses PATH B SignedRequest format:
+   * - public_key: used for signature verification
+   * - wallet_address: used for balance operations
+   * 
    * POST L1:/bridge/initiate
    * @param {number} amount - Amount to bridge to L2
    * @param {Function} signFn - Optional signing function for advanced users
@@ -1269,54 +1600,109 @@ class PredictionMarket {
       return { success: false, error: 'Amount must be positive' };
     }
 
-    const timestamp = getTimestamp();
-    const nonce = await this.getL1Nonce(this.walletAddress);
-    const nextNonce = (nonce?.cross_layer_nonce || nonce?.l1_nonce || 0) + 1;
+    // ❌ STOPPER: If we don't have a key, don't even try the server.
+    if (!this.privateKey || !this.publicKey) {
+      console.error('❌ BRIDGE FAILED: No private key loaded.');
+      return { 
+        success: false, 
+        error: 'Wallet not unlocked. Please generate or load a private key to bridge funds.' 
+      };
+    }
 
-    // Build the payload
-    const payload = JSON.stringify({
+    const timestamp = getTimestamp();
+    const nonce = generateNonce();
+    
+    // ============================================================================
+    // PATH B: SignedRequest Format
+    // - payload: JSON object with the actual request data
+    // - signature signs: payload_json + "\n" + timestamp + "\n" + nonce
+    // - L1 uses public_key for verification, wallet_address for balances
+    // ============================================================================
+
+    // Create the payload JSON (what we're requesting)
+    const payloadObj = {
       target_address: this.walletAddress,  // Same address on L2
       amount: parseFloat(amount),
       target_layer: 'L2'
-    });
+    };
+    const payloadJson = JSON.stringify(payloadObj);
+    
+    // Create the signed content: payload\ntimestamp\nnonce
+    const signedContent = `${payloadJson}\n${timestamp}\n${nonce}`;
 
-    // Create signature (mock for now, or use signFn if provided)
+    // 🔍 DEBUG: Show what we're signing
+    console.log('========================================');
+    console.log('[bridgeToL2] 📝 PATH B SIGNATURE:');
+    console.log('   payload JSON:', payloadJson);
+    console.log('   timestamp:', timestamp);
+    console.log('   nonce:', nonce);
+    console.log('   ---');
+    console.log('   SIGNED CONTENT:');
+    console.log('   "' + signedContent.replace(/\n/g, '\\n') + '"');
+    console.log('========================================');
+
+    // Create signature
     let signature;
     if (signFn) {
-      const message = `${payload}:${timestamp}:${nextNonce}`;
-      signature = signFn(message);
+      signature = signFn(signedContent);
     } else {
-      // Mock signature for development
-      signature = `sig_bridge_${this.walletAddress.slice(0, 8)}_${timestamp.toString(16)}`;
+      signature = this.signMessage(signedContent);
     }
 
-    const signedRequest = {
-      public_key: this.walletAddress,
-      payload: payload,
+    // ✅ PATH B: SignedRequest format with decoupled identity
+    const requestBody = {
+      public_key: this.publicKey,           // 64-char hex - for signature verification
+      wallet_address: this.walletAddress,   // L1... address - for balance operations
+      payload: payloadJson,                 // JSON string of the actual request
       timestamp: timestamp,
-      nonce: nextNonce,
-      signature: signature
+      nonce: nonce,
+      signature: signature                  // Signs: payload\ntimestamp\nnonce
     };
 
-    console.log('🌉 Initiating L1→L2 bridge:', { amount, wallet: this.walletAddress });
+    console.log('🌉 Initiating L1→L2 bridge (Path B):', {
+      wallet_address: this.walletAddress,
+      public_key: this.publicKey?.slice(0, 16) + '...',
+      amount: amount
+    });
 
     try {
       // Send to L1 (not L2!)
       const response = await fetch(`${this.l1Url}/bridge/initiate`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(signedRequest)
+        body: JSON.stringify(requestBody)
       });
 
-      const data = await response.json();
+      // Handle response
+      const text = await response.text();
+      console.log(`📥 L1 bridge response (${response.status}): ${text}`);
 
-      if (data.success) {
+      let data;
+      try {
+        data = JSON.parse(text);
+      } catch (e) {
+        return { 
+          success: false, 
+          error: text || `HTTP ${response.status}` 
+        };
+      }
+
+      if (!response.ok) {
+        return { 
+          success: false, 
+          error: data.error || data.message || `HTTP ${response.status}` 
+        };
+      }
+
+      if (data.success || data.bridge_id) {
         console.log(`✅ Bridge initiated: ${data.bridge_id}`);
         console.log(`   L1 Balance reduced by ${amount} BB`);
         console.log(`   L2 will credit ${amount} BB shortly`);
         
-        // Optionally notify L2 to credit immediately (for dev)
+        // Notify L2 to credit immediately (for dev)
         await this.notifyL2BridgeComplete(data.bridge_id, amount);
+        
+        return { success: true, ...data };
       }
 
       return data;
@@ -1467,6 +1853,36 @@ class PredictionMarket {
     } catch (error) {
       return { success: false, error: error.message };
     }
+  }
+
+  /**
+   * Get the "Unified Balance" - making L1 and L2 feel like one account.
+   * Returns a single object that UI can use to show "Available Funds".
+   * 
+   * UI should display: Total Balance = Vault (L1) + Hot (L2)
+   * This abstracts away the L1/L2 complexity from the user.
+   * 
+   * @returns {Promise<Object>} Unified balance info
+   */
+  async getUnifiedBalance() {
+    const data = await this.getFullBalance();
+    if (!data.success) {
+      return { 
+        total: 0, 
+        available: 0, 
+        vault: 0, 
+        needs_bridging: false,
+        error: data.error 
+      };
+    }
+
+    return {
+      total: data.total,              // Show this big number to the user as "Balance"
+      available: data.l2_balance,     // Actual chips on table (ready for instant bets)
+      vault: data.l1_balance,         // Funds in L1 that need bridging
+      needs_bridging: data.l1_balance > 0, // UI hint: show "funds available to bridge"
+      wallet: data.wallet
+    };
   }
 
   /**
@@ -2053,6 +2469,96 @@ class PredictionMarket {
       body: JSON.stringify({ address, balance })
     });
     return response.json();
+  }
+
+  // ==========================================================================
+  // KEY STORAGE HELPERS (Browser localStorage)
+  // ==========================================================================
+
+  /**
+   * Save the current keypair to localStorage (encrypted with password)
+   * WARNING: localStorage is not secure for production. Use a proper wallet.
+   * @param {string} password - Password to encrypt the key
+   */
+  saveKeyToStorage(password = '') {
+    if (!this.privateKey) {
+      throw new Error('No private key to save. Call generateKeypair() first.');
+    }
+    
+    const seed = bytesToHex(this.privateKey.slice(0, 32)); // Get seed from secretKey
+    
+    if (typeof localStorage === 'undefined') {
+      console.warn('⚠️ localStorage not available (not in browser)');
+      return { success: false, error: 'localStorage not available' };
+    }
+
+    // Simple XOR "encryption" with password (NOT SECURE - demo only)
+    // For production, use WebCrypto API with PBKDF2 + AES-GCM
+    let storedValue = seed;
+    if (password) {
+      const encoder = new TextEncoder();
+      const passwordBytes = encoder.encode(password);
+      const seedBytes = hexToBytes(seed);
+      const encrypted = new Uint8Array(32);
+      for (let i = 0; i < 32; i++) {
+        encrypted[i] = seedBytes[i] ^ passwordBytes[i % passwordBytes.length];
+      }
+      storedValue = bytesToHex(encrypted);
+    }
+
+    localStorage.setItem('blackbook_wallet_key', storedValue);
+    localStorage.setItem('blackbook_wallet_public', this.publicKey);
+    console.log('💾 Key saved to localStorage');
+    return { success: true, publicKey: this.publicKey };
+  }
+
+  /**
+   * Load keypair from localStorage
+   * @param {string} password - Password to decrypt the key
+   */
+  loadKeyFromStorage(password = '') {
+    if (typeof localStorage === 'undefined') {
+      console.warn('⚠️ localStorage not available (not in browser)');
+      return { success: false, error: 'localStorage not available' };
+    }
+
+    const storedValue = localStorage.getItem('blackbook_wallet_key');
+    if (!storedValue) {
+      return { success: false, error: 'No key found in storage' };
+    }
+
+    let seed = storedValue;
+    if (password) {
+      const encoder = new TextEncoder();
+      const passwordBytes = encoder.encode(password);
+      const encryptedBytes = hexToBytes(storedValue);
+      const decrypted = new Uint8Array(32);
+      for (let i = 0; i < 32; i++) {
+        decrypted[i] = encryptedBytes[i] ^ passwordBytes[i % passwordBytes.length];
+      }
+      seed = bytesToHex(decrypted);
+    }
+
+    try {
+      this.setPrivateKey(seed);
+      console.log('🔑 Key loaded from localStorage');
+      return { success: true, publicKey: this.publicKey };
+    } catch (e) {
+      return { success: false, error: `Invalid key or wrong password: ${e.message}` };
+    }
+  }
+
+  /**
+   * Clear stored keys from localStorage
+   */
+  clearStoredKey() {
+    if (typeof localStorage !== 'undefined') {
+      localStorage.removeItem('blackbook_wallet_key');
+      localStorage.removeItem('blackbook_wallet_public');
+      console.log('🗑️ Stored keys cleared');
+    }
+    this.privateKey = null;
+    this.publicKey = null;
   }
 }
 

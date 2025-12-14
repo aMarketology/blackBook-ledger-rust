@@ -181,6 +181,22 @@ pub struct SignedBetResponse {
     pub error: Option<String>,
 }
 
+impl SignedBetResponse {
+    pub fn error(msg: &str) -> Self {
+        Self {
+            success: false,
+            bet_id: None,
+            transaction_id: None,
+            market_id: None,
+            outcome: None,
+            amount: None,
+            new_balance: None,
+            nonce_used: None,
+            error: Some(msg.to_string()),
+        }
+    }
+}
+
 #[derive(Debug, Deserialize)]
 pub struct CreateMarketRequest {
     pub title: String,

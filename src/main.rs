@@ -10,17 +10,14 @@ use tower_http::cors::{Any, CorsLayer};
 
 // Module declarations
 mod market_resolve;
-mod hot_upgrades;
 mod auth;
 mod easteregg;
-mod l1_rpc_client;
 mod bridge;
 mod models;
+mod ledger;
 mod app_state;
 mod handlers;
 mod routes;
-mod optimistic_ledger;
-mod l1_sync;
 
 #[path = "../rss/mod.rs"]
 mod rss;
@@ -30,7 +27,7 @@ mod rpc;
 
 use app_state::{AppState, SharedState};
 use handlers::*;
-use routes::auth::{connect_wallet, get_wallet_balance};
+use routes::auth::connect_wallet;
 
 #[tokio::main]
 async fn main() {
@@ -112,7 +109,7 @@ async fn main() {
     println!("   POST /settle            - Submit pending bets to L1");
     println!("   GET  /settle/status     - Get settlement status");
     println!("   POST /sync              - Sync balances from L1");
-    println!("\n📡 Cryptographic signatures only - No JWT required\n");
+
 
     // Setup graceful shutdown
     let listener = tokio::net::TcpListener::bind(&addr).await.unwrap();
