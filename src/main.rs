@@ -46,6 +46,8 @@ async fn main() {
         // ===== CORE MARKET ENDPOINTS =====
         .route("/markets", get(get_markets))
         .route("/markets", post(create_market))
+        .route("/markets/initial-liquidity", post(initialize_all_market_liquidity))
+        .route("/markets/initial-liquidity/:market_id", post(initialize_market_liquidity))
         .route("/markets/:id", get(get_market))
         
         // ===== AUTHENTICATION ENDPOINTS (NO JWT - CRYPTOGRAPHIC SIGNATURES ONLY) =====
@@ -61,6 +63,7 @@ async fn main() {
         .route("/balance/details/:account", get(get_balance_details))  // Hybrid balance details
         .route("/transfer", post(transfer))
         .route("/ledger", get(get_ledger_activity))
+        .route("/ledger/transactions", get(get_ledger_transactions))  // Public ledger with filtering
         
         // ===== HYBRID L1/L2 SETTLEMENT ENDPOINTS =====
         .route("/settle", post(settle_to_l1))              // Trigger batch settlement
@@ -95,6 +98,8 @@ async fn main() {
     println!("   POST /auth/connect      - Connect wallet (creates & funds if new)");
     println!("   GET  /markets           - List all prediction markets");
     println!("   POST /markets           - Create new market");
+    println!("   POST /markets/initial-liquidity - Init CPMM + L1 mint for all markets");
+    println!("   POST /markets/initial-liquidity/:id - Init specific market (user/house funded)");
     println!("   GET  /markets/:id       - Get market details");
     println!("   POST /bet/signed        - Place bet (cryptographic signature)");
     println!("   POST /rpc/submit        - Place bet (SDK alias)");
@@ -103,6 +108,7 @@ async fn main() {
     println!("   GET  /balance/details/:account - Get detailed balance (L1/L2)");
     println!("   POST /transfer          - Transfer tokens");
     println!("   GET  /ledger            - View blockchain activity");
+    println!("   GET  /ledger/transactions - Public ledger w/ filtering & pagination");
     println!("   GET  /rpc/nonce/:addr   - Get nonce for signing");
     println!("");
     println!("   ═══ HYBRID L1/L2 SETTLEMENT ═══");

@@ -179,6 +179,17 @@ impl PredictionMarket {
     }
 
     pub fn calculate_odds(&self) -> Vec<f64> {
+        // Use CPMM prices if pool exists (dynamic odds)
+        if let Some(ref pool) = self.cpmm_pool {
+            return pool.calculate_prices();
+        }
+        
+        // Fallback to initial probabilities if set
+        if !self.initial_probabilities.is_empty() && self.total_volume == 0.0 {
+            return self.initial_probabilities.clone();
+        }
+        
+        // Fallback to volume-weighted odds
         if self.total_volume == 0.0 {
             let equal_prob = 1.0 / self.options.len() as f64;
             return vec![equal_prob; self.options.len()];

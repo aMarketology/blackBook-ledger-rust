@@ -50,6 +50,9 @@ pub enum TxType {
     Withdraw,
     Payout,
     AccountCreated,
+    MarketCreated,
+    LiquidityAdded,
+    MarketResolved,
 }
 
 /// A single transaction record
@@ -91,6 +94,33 @@ impl Transaction {
     pub fn transfer(from: &str, to: &str, amount: f64, sig: &str) -> Self {
         let mut tx = Self::new(TxType::Transfer, from, amount, sig);
         tx.to = Some(to.to_string());
+        tx
+    }
+    
+    pub fn market_created(market_id: &str, title: &str, liquidity: f64) -> Self {
+        let mut tx = Self::new(TxType::MarketCreated, "SYSTEM", liquidity, "market_genesis");
+        tx.market_id = Some(market_id.to_string());
+        tx.to = Some(title.to_string()); // Store title in 'to' field for reference
+        tx
+    }
+    
+    pub fn liquidity_added(market_id: &str, funder: &str, amount: f64, sig: &str) -> Self {
+        let mut tx = Self::new(TxType::LiquidityAdded, funder, amount, sig);
+        tx.market_id = Some(market_id.to_string());
+        tx
+    }
+    
+    pub fn market_resolved(market_id: &str, winning_outcome: usize) -> Self {
+        let mut tx = Self::new(TxType::MarketResolved, "SYSTEM", 0.0, "resolution");
+        tx.market_id = Some(market_id.to_string());
+        tx.outcome = Some(winning_outcome);
+        tx
+    }
+    
+    pub fn payout(to: &str, market_id: &str, amount: f64) -> Self {
+        let mut tx = Self::new(TxType::Payout, "SYSTEM", amount, "payout");
+        tx.to = Some(to.to_string());
+        tx.market_id = Some(market_id.to_string());
         tx
     }
 }
@@ -259,6 +289,13 @@ impl Ledger {
     /// Get recent transactions
     pub fn recent_transactions(&self, limit: usize) -> Vec<&Transaction> {
         self.transactions.iter().rev().take(limit).collect()
+    }
+    
+    /// Record any transaction (used for market events, liquidity, etc.)
+    pub fn record(&mut self, tx: Transaction) -> Transaction {
+        self.block += 1;
+        self.transactions.push(tx.clone());
+        tx
     }
     
     /// Get stats
