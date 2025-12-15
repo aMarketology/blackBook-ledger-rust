@@ -333,8 +333,8 @@ pub fn write_rss_event_to_file(event: &RssEvent, rss_dir: &str) -> Result<String
         return Err(format!("Failed to create RSS directory: {}", e));
     }
     
-    // Generate filename from market_id (first 12 chars for readability)
-    let filename = format!("{}/{}.rss", rss_dir, &event.market_id[..12.min(event.market_id.len())]);
+    // Use full market_id as filename for simplicity
+    let filename = format!("{}/{}.rss", rss_dir, &event.market_id);
     
     // Build RSS XML content
     let xml = format!(

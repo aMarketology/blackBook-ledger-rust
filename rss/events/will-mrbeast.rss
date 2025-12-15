@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0" xmlns:blackbook="https://blackbook.market/rss">
+  <channel>
+    <title>BlackBook Prediction Market</title>
+    <link>https://blackbook.market</link>
+    <description>Prediction market events on BlackBook Layer 2</description>
+    <item>
+      <guid isPermaLink="false">will-mrbeast-hit-500-393a2c</guid>
+      <title>Will &apos;Will MrBeast hit 500 Million subscribers by Dec 31&apos; predictions come true?</title>
+      <description>Based on: Will MrBeast hit 500 Million subscribers by Dec 31? Predi... | Polymarket</description>
+      <link>https://polymarket.com/event/will-mrbeast-hit-500-million-subscribers-by-dec-31</link>
+      <pubDate>2025-12-15T02:48:48.671795+00:00</pubDate>
+      <blackbook:marketId>will-mrbeast-hit-500-393a2c</blackbook:marketId>
+      <blackbook:category>uncategorized</blackbook:category>
+      <blackbook:marketType>three_choice</blackbook:marketType>
+      <blackbook:outcomes>Yes,No Change,No</blackbook:outcomes>
+      <blackbook:probabilities>0.4900,0.0200,0.4900</blackbook:probabilities>
+      <blackbook:source>will-mrbeast-hit-500-393a2c</blackbook:source>
+      <blackbook:tags></blackbook:tags>
+      <blackbook:addedToLedger>true</blackbook:addedToLedger>
+      <blackbook:freezeDate>TBD</blackbook:freezeDate>
+      <blackbook:resolutionDate>TBD</blackbook:resolutionDate>
+    </item>
+  </channel>
+</rss>

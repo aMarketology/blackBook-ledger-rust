@@ -56,6 +56,40 @@ pub struct PredictionMarket {
     pub launched_by: Option<String>,
     #[serde(default)]
     pub source_event_id: Option<String>,
+    
+    // === NEW OPTIMAL FIELDS ===
+    
+    /// Source ID from external scraper/system
+    #[serde(default)]
+    pub source: Option<String>,
+    
+    /// Tags for search/filtering
+    #[serde(default)]
+    pub tags: Vec<String>,
+    
+    /// Market type: "binary", "three_choice", "multi"
+    #[serde(default)]
+    pub market_type: Option<String>,
+    
+    /// Initial probabilities
+    #[serde(default)]
+    pub initial_probabilities: Vec<f64>,
+    
+    /// Source article URL
+    #[serde(default)]
+    pub source_url: Option<String>,
+    
+    /// Preview image URL
+    #[serde(default)]
+    pub image_url: Option<String>,
+    
+    /// Lifecycle dates
+    #[serde(default)]
+    pub dates: Option<MarketDates>,
+    
+    /// Resolution rules and oracle config
+    #[serde(default)]
+    pub resolution_rules: Option<ResolutionRules>,
 }
 
 impl PredictionMarket {
@@ -92,6 +126,15 @@ impl PredictionMarket {
             betting_closes_at: None,
             launched_by: None,
             source_event_id: None,
+            // New optimal fields
+            source: None,
+            tags: Vec::new(),
+            market_type: None,
+            initial_probabilities: Vec::new(),
+            source_url: None,
+            image_url: None,
+            dates: None,
+            resolution_rules: None,
         }
     }
 
@@ -197,12 +240,100 @@ impl SignedBetResponse {
     }
 }
 
+/// Dates for market lifecycle
+#[derive(Debug, Clone, Deserialize, Serialize, Default)]
+pub struct MarketDates {
+    #[serde(default)]
+    pub published: Option<String>,
+    #[serde(default)]
+    pub freeze: Option<String>,
+    #[serde(default)]
+    pub resolution: Option<String>,
+}
+
+/// Resolution rules configuration
+#[derive(Debug, Clone, Deserialize, Serialize, Default)]
+pub struct ResolutionRules {
+    #[serde(default)]
+    pub provider: Option<String>,
+    #[serde(default)]
+    pub data_source: Option<String>,
+    #[serde(default)]
+    pub conditions: Option<std::collections::HashMap<String, String>>,
+}
+
+/// POST /markets request body
+/// 
+/// # Minimal Payload (3 fields):
+/// ```json
+/// {
+///   "title": "Will X happen?",
+///   "description": "Market resolves YES if...",
+///   "outcomes": ["Yes", "No"]
+/// }
+/// ```
+/// 
+/// # Optimal Payload (full structure):
+/// ```json
+/// {
+///   "source": "article_123_abc",
+///   "title": "Bitcoin breaks $100k before 2025?",
+///   "description": "Market resolves YES if BTC > $100k...",
+///   "category": "crypto",
+///   "tags": ["bitcoin", "price-action"],
+///   "market_type": "binary",
+///   "outcomes": ["Yes", "No"],
+///   "initial_probabilities": [0.49, 0.51],
+///   "source_url": "https://...",
+///   "image_url": "https://...",
+///   "dates": { "published": "...", "freeze": null, "resolution": null },
+///   "resolution_rules": { "provider": "oracle_v1", "data_source": "...", "conditions": {...} }
+/// }
+/// ```
 #[derive(Debug, Deserialize)]
 pub struct CreateMarketRequest {
+    // === REQUIRED FIELDS ===
     pub title: String,
     pub description: String,
-    pub category: String,
-    pub options: Vec<String>,
+    pub outcomes: Vec<String>,
+    
+    // === OPTIONAL FIELDS ===
+    
+    /// Source ID from scraper/external system (also accepts "id" or "market_id")
+    #[serde(default, alias = "id", alias = "market_id")]
+    pub source: Option<String>,
+    
+    /// Category: "crypto", "sports", "politics", "tech", etc.
+    #[serde(default)]
+    pub category: Option<String>,
+    
+    /// Tags for search/filtering
+    #[serde(default)]
+    pub tags: Option<Vec<String>>,
+    
+    /// Market type: "binary", "three_choice", "multi" (default: "binary")
+    #[serde(default)]
+    pub market_type: Option<String>,
+    
+    /// Initial probabilities (defaults to equal split if null)
+    #[serde(default)]
+    pub initial_probabilities: Option<Vec<f64>>,
+    
+    /// Source article URL
+    #[serde(default)]
+    pub source_url: Option<String>,
+    
+    /// Preview image URL
+    #[serde(default)]
+    pub image_url: Option<String>,
+    
+    /// Lifecycle dates
+    #[serde(default)]
+    pub dates: Option<MarketDates>,
+    
+    /// Resolution rules and oracle config
+    #[serde(default)]
+    pub resolution_rules: Option<ResolutionRules>,
 }
 
 #[derive(Debug, Deserialize)]

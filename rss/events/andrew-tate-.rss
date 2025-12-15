@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0" xmlns:blackbook="https://blackbook.market/rss">
+  <channel>
+    <title>BlackBook Prediction Market</title>
+    <link>https://blackbook.market</link>
+    <description>Prediction market events on BlackBook Layer 2</description>
+    <item>
+      <guid isPermaLink="false">andrew-tate-fight-date-4c9be9</guid>
+      <title>Will &apos;Andrew Tate fight date, UK start time and Misfits &apos; predictions come true?</title>
+      <description>Based on: Andrew Tate fight date, UK start time and Misfits fight card - The Mirror</description>
+      <link>https://www.mirror.co.uk/sport/boxing/andrew-tate-fight-date-uk-36351199</link>
+      <pubDate>2025-12-15T02:46:34.915002+00:00</pubDate>
+      <blackbook:marketId>andrew-tate-fight-date-4c9be9</blackbook:marketId>
+      <blackbook:category>uncategorized</blackbook:category>
+      <blackbook:marketType>three_choice</blackbook:marketType>
+      <blackbook:outcomes>Yes,No Change,No</blackbook:outcomes>
+      <blackbook:probabilities>0.4900,0.0200,0.4900</blackbook:probabilities>
+      <blackbook:source>andrew-tate-fight-date-4c9be9</blackbook:source>
+      <blackbook:tags></blackbook:tags>
+      <blackbook:addedToLedger>true</blackbook:addedToLedger>
+      <blackbook:freezeDate>TBD</blackbook:freezeDate>
+      <blackbook:resolutionDate>TBD</blackbook:resolutionDate>
+    </item>
+  </channel>
+</rss>

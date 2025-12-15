@@ -9,6 +9,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use crate::app_state::SharedState;
 use crate::models::*;
+use crate::rss::{RssEvent, EventDates, write_rss_event_to_file, ResolutionRules as RssResolutionRules};
+use std::collections::HashMap;
 
 // ===== BET REQUEST =====
 
@@ -49,10 +51,23 @@ pub async fn place_signed_bet(
     
     let mut app = state.lock().unwrap();
     
-    // Check nonce
+    // Validate nonce (replay protection)
     let last_nonce = app.nonces.get(&req.from_address).copied().unwrap_or(0);
+    
+    // Nonce must be greater than last used nonce
+    // For first-time users (last_nonce 0), accept nonce 1+
     if req.nonce <= last_nonce {
-        return Err((StatusCode::BAD_REQUEST, Json(SignedBetResponse::error("Invalid nonce"))));
+        return Err((StatusCode::BAD_REQUEST, Json(SignedBetResponse {
+            success: false,
+            bet_id: None,
+            transaction_id: None,
+            market_id: None,
+            outcome: None,
+            amount: None,
+            new_balance: None,
+            nonce_used: None,
+            error: Some(format!("Invalid nonce: got {}, expected > {}", req.nonce, last_nonce)),
+        })));
     }
     
     // Resolve address
@@ -125,11 +140,21 @@ pub async fn get_market(
         "id": m.id,
         "title": m.title,
         "description": m.description,
-        "options": m.options,
+        "category": m.category,
+        "outcomes": m.options,
+        "market_type": m.market_type,
+        "tags": m.tags,
         "is_resolved": m.is_resolved,
         "total_volume": m.total_volume,
         "odds": m.calculate_odds(),
         "option_stats": m.option_stats,
+        "initial_probabilities": m.initial_probabilities,
+        "source": m.source,
+        "source_url": m.source_url,
+        "image_url": m.image_url,
+        "dates": m.dates,
+        "resolution_rules": m.resolution_rules,
+        "created_at": m.created_at
     })))
 }
 
@@ -138,11 +163,99 @@ pub async fn create_market(
     Json(payload): Json<CreateMarketRequest>,
 ) -> Result<Json<Value>, StatusCode> {
     let mut app = state.lock().unwrap();
-    let id = uuid::Uuid::new_v4().simple().to_string();
-    let market = PredictionMarket::new(id.clone(), payload.title.clone(), payload.description, payload.category, payload.options);
+    
+    // Use source ID or generate new UUID
+    let id = payload.source.clone().unwrap_or_else(|| uuid::Uuid::new_v4().simple().to_string());
+    
+    // Validate outcomes
+    if payload.outcomes.is_empty() {
+        return Ok(Json(json!({ "success": false, "error": "At least one outcome required" })));
+    }
+    
+    // Category defaults to "general" if not provided
+    let category = payload.category.clone().unwrap_or_else(|| "general".to_string());
+    
+    // Create market with base fields
+    let mut market = PredictionMarket::new(
+        id.clone(),
+        payload.title.clone(),
+        payload.description.clone(),
+        category.clone(),
+        payload.outcomes.clone(),
+    );
+    
+    // Set optional fields
+    market.source = payload.source.clone();
+    market.tags = payload.tags.clone().unwrap_or_default();
+    market.market_type = payload.market_type.clone();
+    market.source_url = payload.source_url.clone();
+    market.image_url = payload.image_url.clone();
+    market.dates = payload.dates.clone();
+    market.resolution_rules = payload.resolution_rules.clone();
+    
+    // Set initial probabilities (default to equal split if not provided)
+    if let Some(probs) = &payload.initial_probabilities {
+        market.initial_probabilities = probs.clone();
+    } else {
+        // Equal probability split
+        let n = payload.outcomes.len() as f64;
+        market.initial_probabilities = vec![1.0 / n; payload.outcomes.len()];
+    }
+    
     app.markets.insert(id.clone(), market);
+    
+    // === PERSIST TO RSS FILE ===
+    let rss_event = RssEvent {
+        title: payload.title.clone(),
+        description: payload.description.clone(),
+        source: payload.source.clone(),
+        category: payload.category.clone(),
+        tags: payload.tags.clone().unwrap_or_default(),
+        market_type: payload.market_type.clone().unwrap_or_else(|| "binary".to_string()),
+        outcomes: payload.outcomes.clone(),
+        initial_probabilities: payload.initial_probabilities.clone(),
+        source_url: payload.source_url.clone().unwrap_or_default(),
+        image_url: payload.image_url.clone(),
+        dates: EventDates {
+            published: payload.dates.as_ref()
+                .and_then(|d| d.published.clone())
+                .unwrap_or_else(|| chrono::Utc::now().to_rfc3339()),
+            freeze: payload.dates.as_ref().and_then(|d| d.freeze.clone()),
+            resolution: payload.dates.as_ref().and_then(|d| d.resolution.clone()),
+        },
+        resolution_rules: payload.resolution_rules.as_ref().map(|r| RssResolutionRules {
+            provider: r.provider.clone(),
+            data_source: r.data_source.clone(),
+            conditions: r.conditions.clone().unwrap_or_default(),
+        }),
+        market_id: id.clone(),
+        added_to_ledger: true,
+    };
+    
+    // Write to rss/events/ directory
+    let rss_result = write_rss_event_to_file(&rss_event, "rss/events");
+    let rss_file = match &rss_result {
+        Ok(path) => {
+            app.log_activity("💾", "RSS", &format!("Saved: {}", path));
+            Some(path.clone())
+        }
+        Err(e) => {
+            app.log_activity("⚠️", "RSS", &format!("Failed to save: {}", e));
+            None
+        }
+    };
+    
     app.log_activity("📊", "MARKET", &format!("Created: {}", payload.title));
-    Ok(Json(json!({ "success": true, "market_id": id })))
+    
+    Ok(Json(json!({ 
+        "success": true, 
+        "market_id": id,
+        "title": payload.title,
+        "category": category,
+        "outcomes": payload.outcomes,
+        "initial_probabilities": payload.initial_probabilities,
+        "rss_file": rss_file
+    })))
 }
 
 // ===== BALANCE ENDPOINTS =====
@@ -196,8 +309,13 @@ pub async fn get_ledger_activity(State(state): State<SharedState>) -> Json<Value
 
 pub async fn get_nonce(State(state): State<SharedState>, Path(address): Path<String>) -> Json<Value> {
     let app = state.lock().unwrap();
-    let nonce = app.nonces.get(&address).copied().unwrap_or(0);
-    Json(json!({ "address": address, "nonce": nonce }))
+    let last_nonce = app.nonces.get(&address).copied().unwrap_or(0);
+    Json(json!({ 
+        "address": address, 
+        "nonce": last_nonce,
+        "last_used_nonce": last_nonce,
+        "next_nonce": last_nonce + 1
+    }))
 }
 
 // ===== USER ENDPOINTS =====
