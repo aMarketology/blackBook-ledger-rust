@@ -168,7 +168,8 @@ impl Ledger {
         self.accounts.insert(name.to_uppercase(), address.to_string());
         self.balances.insert(address.to_string(), Balance::new(initial));
         self.transactions.push(Transaction::new(TxType::AccountCreated, address, initial, ""));
-        println!("👤 Registered {} ({}) with {} BB", name, &address[..16], initial);
+        let display_addr = if address.len() > 16 { &address[..16] } else { address };
+        println!("👤 Registered {} ({}) with {} BB", name, display_addr, initial);
     }
     
     /// Resolve name or address to address
@@ -289,6 +290,29 @@ impl Ledger {
     /// Get recent transactions
     pub fn recent_transactions(&self, limit: usize) -> Vec<&Transaction> {
         self.transactions.iter().rev().take(limit).collect()
+    }
+    
+    /// Credit an account (add balance) - simplified version for handlers
+    pub fn credit(&mut self, id: &str, amount: f64) {
+        if let Some(addr) = self.resolve(id) {
+            if let Some(bal) = self.balances.get_mut(&addr) {
+                bal.apply(amount);
+            }
+        } else {
+            // Create account if doesn't exist
+            let addr = id.to_string();
+            self.accounts.insert(id.to_string(), addr.clone());
+            self.balances.insert(addr.clone(), Balance::new(amount));
+        }
+    }
+    
+    /// Debit an account (subtract balance) - simplified version for handlers
+    pub fn debit(&mut self, id: &str, amount: f64) {
+        if let Some(addr) = self.resolve(id) {
+            if let Some(bal) = self.balances.get_mut(&addr) {
+                bal.apply(-amount);
+            }
+        }
     }
     
     /// Record any transaction (used for market events, liquidity, etc.)

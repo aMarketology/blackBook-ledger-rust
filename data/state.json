@@ -1,5 +1,199 @@
 {
   "markets": {
+    "andrew-tate-fight-date-4c9be9": {
+      "id": "andrew-tate-fight-date-4c9be9",
+      "title": "Will 'Andrew Tate fight date, UK start time and Misfits ' predictions come true?",
+      "description": "Based on: Andrew Tate fight date, UK start time and Misfits fight card - The Mirror",
+      "category": "general",
+      "options": [
+        "Yes",
+        "No Change",
+        "No"
+      ],
+      "is_resolved": false,
+      "winning_option": null,
+      "escrow_address": "escrow_cc6aef6858ed41a9b339fb4d4736630f",
+      "created_at": 1765766796,
+      "total_volume": 0.0,
+      "unique_bettors": [],
+      "bet_count": 0,
+      "on_leaderboard": false,
+      "option_stats": [
+        {
+          "total_volume": 0.0,
+          "bet_count": 0,
+          "unique_bettors": []
+        },
+        {
+          "total_volume": 0.0,
+          "bet_count": 0,
+          "unique_bettors": []
+        },
+        {
+          "total_volume": 0.0,
+          "bet_count": 0,
+          "unique_bettors": []
+        }
+      ],
+      "bets": [],
+      "market_status": "active",
+      "cpmm_pool": null,
+      "provisional_deadline": null,
+      "betting_closes_at": null,
+      "launched_by": null,
+      "source_event_id": null,
+      "source": "andrew-tate-fight-date-4c9be9",
+      "tags": [],
+      "market_type": "three_choice",
+      "initial_probabilities": [
+        0.49,
+        0.02,
+        0.49
+      ],
+      "source_url": "https://www.mirror.co.uk/sport/boxing/andrew-tate-fight-date-uk-36351199",
+      "image_url": null,
+      "dates": {
+        "published": "2025-12-15T02:46:34.915002+00:00",
+        "freeze": null,
+        "resolution": null
+      },
+      "resolution_rules": null
+    },
+    "stevewilldoit_youtube_2026": {
+      "id": "stevewilldoit_youtube_2026",
+      "title": "Will SteveWillDoIt be reinstated on YouTube by Jan 1, 2026?",
+      "description": "YouTuber Stephen Deleonardis (SteveWillDoIt) was banned in 2022 for severe violations involving gambling promotions. Reports suggest potential reinstatement by January 1, 2026. Market resolves YES if channel becomes active.",
+      "category": "culture",
+      "options": [
+        "Yes",
+        "No"
+      ],
+      "is_resolved": false,
+      "winning_option": null,
+      "escrow_address": "escrow_d40fb0d3639943d6b249022d9898a466",
+      "created_at": 1765505530,
+      "total_volume": 0.0,
+      "unique_bettors": [],
+      "bet_count": 0,
+      "on_leaderboard": false,
+      "option_stats": [
+        {
+          "total_volume": 0.0,
+          "bet_count": 0,
+          "unique_bettors": []
+        },
+        {
+          "total_volume": 0.0,
+          "bet_count": 0,
+          "unique_bettors": []
+        }
+      ],
+      "bets": [],
+      "market_status": "active",
+      "cpmm_pool": null,
+      "provisional_deadline": null,
+      "betting_closes_at": null,
+      "launched_by": null,
+      "source_event_id": null,
+      "source": null,
+      "tags": [],
+      "market_type": null,
+      "initial_probabilities": [],
+      "source_url": null,
+      "image_url": null,
+      "dates": null,
+      "resolution_rules": null
+    },
+    "texas_sb2420_2026": {
+      "id": "texas_sb2420_2026",
+      "title": "Will Texas SB 2420 require parental consent for minors by Feb 2026?",
+      "description": "Texas Senate Bill 2420, the App Store Accountability Act (ASAA), requires app store operators and developers to verify user ages and secure parental consent for minors. Effective January 1, 2026, targeting 7.5 million minors in Texas.",
+      "category": "politics",
+      "options": [
+        "Yes",
+        "No"
+      ],
+      "is_resolved": false,
+      "winning_option": null,
+      "escrow_address": "escrow_2c223adcc8184f2295d634b04983477a",
+      "created_at": 1765505530,
+      "total_volume": 0.0,
+      "unique_bettors": [],
+      "bet_count": 0,
+      "on_leaderboard": false,
+      "option_stats": [
+        {
+          "total_volume": 0.0,
+          "bet_count": 0,
+          "unique_bettors": []
+        },
+        {
+          "total_volume": 0.0,
+          "bet_count": 0,
+          "unique_bettors": []
+        }
+      ],
+      "bets": [],
+      "market_status": "active",
+      "cpmm_pool": null,
+      "provisional_deadline": null,
+      "betting_closes_at": null,
+      "launched_by": null,
+      "source_event_id": null,
+      "source": null,
+      "tags": [],
+      "market_type": null,
+      "initial_probabilities": [],
+      "source_url": null,
+      "image_url": null,
+      "dates": null,
+      "resolution_rules": null
+    },
+    "pegatron_georgetown_2026": {
+      "id": "pegatron_georgetown_2026",
+      "title": "Will Pegatron invest $35M+ in Georgetown facility by end of 2026?",
+      "description": "Pegatron announced plans to invest $35M in Georgetown facility expansion. The Taiwanese electronics manufacturer supplies major tech companies. Market resolves YES if investment completes by December 31, 2026.",
+      "category": "business",
+      "options": [
+        "Yes",
+        "No"
+      ],
+      "is_resolved": false,
+      "winning_option": null,
+      "escrow_address": "escrow_7a90d62cd32c4ea38621e16dff10eb2f",
+      "created_at": 1765505530,
+      "total_volume": 0.0,
+      "unique_bettors": [],
+      "bet_count": 0,
+      "on_leaderboard": false,
+      "option_stats": [
+        {
+          "total_volume": 0.0,
+          "bet_count": 0,
+          "unique_bettors": []
+        },
+        {
+          "total_volume": 0.0,
+          "bet_count": 0,
+          "unique_bettors": []
+        }
+      ],
+      "bets": [],
+      "market_status": "active",
+      "cpmm_pool": null,
+      "provisional_deadline": null,
+      "betting_closes_at": null,
+      "launched_by": null,
+      "source_event_id": null,
+      "source": null,
+      "tags": [],
+      "market_type": null,
+      "initial_probabilities": [],
+      "source_url": null,
+      "image_url": null,
+      "dates": null,
+      "resolution_rules": null
+    },
     "moodys_treasury_yield_2026": {
       "id": "moodys_treasury_yield_2026",
       "title": "Will Moody's downgrade trigger US Treasury yield above 5% by Q2 2026?",
@@ -45,18 +239,18 @@
       "dates": null,
       "resolution_rules": null
     },
-    "palantir_army_contract_2026": {
-      "id": "palantir_army_contract_2026",
-      "title": "Will Palantir's $10B Army contract deliver first deployment by Q2 2026?",
-      "description": "Palantir secured landmark $10 billion U.S. Army contract on July 31, 2025, cementing its role as military tech titan. Market resolves YES if first major deployment occurs by June 30, 2026 under this contract.",
-      "category": "tech",
+    "zelle_stablecoin_2026": {
+      "id": "zelle_stablecoin_2026",
+      "title": "Will Zelle launch international stablecoin payments by Q3 2026?",
+      "description": "Zelle, processing $1 trillion in 2024, explores stablecoin adoption for international payments. With GENIUS Act providing regulatory clarity, market resolves YES if Zelle launches stablecoin-based cross-border payments by Sept 30, 2026.",
+      "category": "crypto",
       "options": [
         "Yes",
         "No"
       ],
       "is_resolved": false,
       "winning_option": null,
-      "escrow_address": "escrow_e6f586f25d194feaa07aa53a1d7d3627",
+      "escrow_address": "escrow_16ae72f312524f3c8499255064e4d6d7",
       "created_at": 1765505530,
       "total_volume": 0.0,
       "unique_bettors": [],
@@ -90,18 +284,243 @@
       "dates": null,
       "resolution_rules": null
     },
-    "trump_cz_pardon_2026": {
-      "id": "trump_cz_pardon_2026",
-      "title": "Will Trump pardon Binance founder CZ before 2026 midterms?",
-      "description": "Reports suggest Trump may pardon Changpeng Zhao (CZ), former Binance CEO, who faced charges in Biden administration's crypto crackdown. Market resolves YES if presidential pardon issued before November 2026 midterm elections.",
-      "category": "crypto",
+    "tesla_robotaxi_safety_2026": {
+      "id": "tesla_robotaxi_safety_2026",
+      "title": "Will Tesla Robotaxis reduce crash rate by 30% in 2026?",
+      "description": "Tesla's robotaxis continue experiencing crashes despite safety monitors. Market resolves YES if Tesla reports 30%+ reduction in crash rates for autonomous vehicles operating with safety monitors by December 31, 2026.",
+      "category": "tech",
       "options": [
         "Yes",
         "No"
       ],
       "is_resolved": false,
       "winning_option": null,
-      "escrow_address": "escrow_7b4d9b1477154841bf0f96211bc546d6",
+      "escrow_address": "escrow_ea5d19c0aa944921bcb5df8b10da3c7b",
+      "created_at": 1765505530,
+      "total_volume": 0.0,
+      "unique_bettors": [],
+      "bet_count": 0,
+      "on_leaderboard": false,
+      "option_stats": [
+        {
+          "total_volume": 0.0,
+          "bet_count": 0,
+          "unique_bettors": []
+        },
+        {
+          "total_volume": 0.0,
+          "bet_count": 0,
+          "unique_bettors": []
+        }
+      ],
+      "bets": [],
+      "market_status": "active",
+      "cpmm_pool": null,
+      "provisional_deadline": null,
+      "betting_closes_at": null,
+      "launched_by": null,
+      "source_event_id": null,
+      "source": null,
+      "tags": [],
+      "market_type": null,
+      "initial_probabilities": [],
+      "source_url": null,
+      "image_url": null,
+      "dates": null,
+      "resolution_rules": null
+    },
+    "meta_ai_chip_migration_2026": {
+      "id": "meta_ai_chip_migration_2026",
+      "title": "Will Meta complete AI chip migration from NVIDIA by end of 2026?",
+      "description": "Meta Platforms is exploring a shift from NVIDIA GPUs to Google's parent company TPUs and custom compute chips for AI workloads. Market resolves YES if Meta announces 25%+ migration to non-NVIDIA hardware by Dec 31, 2026.",
+      "category": "tech",
+      "options": [
+        "Yes",
+        "No"
+      ],
+      "is_resolved": false,
+      "winning_option": null,
+      "escrow_address": "escrow_deb26e39b9fa44fa85b14379ddbbb2ac",
+      "created_at": 1765505530,
+      "total_volume": 0.0,
+      "unique_bettors": [],
+      "bet_count": 0,
+      "on_leaderboard": false,
+      "option_stats": [
+        {
+          "total_volume": 0.0,
+          "bet_count": 0,
+          "unique_bettors": []
+        },
+        {
+          "total_volume": 0.0,
+          "bet_count": 0,
+          "unique_bettors": []
+        }
+      ],
+      "bets": [],
+      "market_status": "active",
+      "cpmm_pool": null,
+      "provisional_deadline": null,
+      "betting_closes_at": null,
+      "launched_by": null,
+      "source_event_id": null,
+      "source": null,
+      "tags": [],
+      "market_type": null,
+      "initial_probabilities": [],
+      "source_url": null,
+      "image_url": null,
+      "dates": null,
+      "resolution_rules": null
+    },
+    "silicon_labs_stock_2026": {
+      "id": "silicon_labs_stock_2026",
+      "title": "Will Silicon Labs stock outperform semiconductor sector in 2026?",
+      "description": "Silicon Labs focuses on IoT connectivity chips with 99.9% uptime and 50% power savings. With 6G and quantum security developments targeting 2030's $100B market, will stock beat semiconductor index by year-end 2026?",
+      "category": "business",
+      "options": [
+        "Yes",
+        "No"
+      ],
+      "is_resolved": false,
+      "winning_option": null,
+      "escrow_address": "escrow_555091b3da534e44b0d47c09f3e7af95",
+      "created_at": 1765505530,
+      "total_volume": 0.0,
+      "unique_bettors": [],
+      "bet_count": 0,
+      "on_leaderboard": false,
+      "option_stats": [
+        {
+          "total_volume": 0.0,
+          "bet_count": 0,
+          "unique_bettors": []
+        },
+        {
+          "total_volume": 0.0,
+          "bet_count": 0,
+          "unique_bettors": []
+        }
+      ],
+      "bets": [],
+      "market_status": "active",
+      "cpmm_pool": null,
+      "provisional_deadline": null,
+      "betting_closes_at": null,
+      "launched_by": null,
+      "source_event_id": null,
+      "source": null,
+      "tags": [],
+      "market_type": null,
+      "initial_probabilities": [],
+      "source_url": null,
+      "image_url": null,
+      "dates": null,
+      "resolution_rules": null
+    },
+    "ramaco_rare_earth_mine_2026": {
+      "id": "ramaco_rare_earth_mine_2026",
+      "title": "Will Ramaco's Wyoming rare earth mine reach production by Dec 2026?",
+      "description": "Ramaco's Brook Mine in Wyoming is the first U.S. rare earth mine opened in 70+ years. Projected output: 1,242 tons of oxides annually from 2 million tons of coal. Market resolves YES if commercial production begins by end of 2026.",
+      "category": "business",
+      "options": [
+        "Yes",
+        "No"
+      ],
+      "is_resolved": false,
+      "winning_option": null,
+      "escrow_address": "escrow_f2f2cdd6f36e425794e1f33bcc9d36e3",
+      "created_at": 1765505530,
+      "total_volume": 0.0,
+      "unique_bettors": [],
+      "bet_count": 0,
+      "on_leaderboard": false,
+      "option_stats": [
+        {
+          "total_volume": 0.0,
+          "bet_count": 0,
+          "unique_bettors": []
+        },
+        {
+          "total_volume": 0.0,
+          "bet_count": 0,
+          "unique_bettors": []
+        }
+      ],
+      "bets": [],
+      "market_status": "active",
+      "cpmm_pool": null,
+      "provisional_deadline": null,
+      "betting_closes_at": null,
+      "launched_by": null,
+      "source_event_id": null,
+      "source": null,
+      "tags": [],
+      "market_type": null,
+      "initial_probabilities": [],
+      "source_url": null,
+      "image_url": null,
+      "dates": null,
+      "resolution_rules": null
+    },
+    "ny_raise_act_2026": {
+      "id": "ny_raise_act_2026",
+      "title": "Will NY RAISE Act require AI incident reporting by March 2026?",
+      "description": "New York's RAISE Act, reintroduced October 22, 2025, compels developers of generative AI models to publish safety protocols and report harmful incidents. Market resolves YES if law passes and becomes enforceable by March 2026.",
+      "category": "politics",
+      "options": [
+        "Yes",
+        "No"
+      ],
+      "is_resolved": false,
+      "winning_option": null,
+      "escrow_address": "escrow_80df8840209b4f73925db830a45d1fe7",
+      "created_at": 1765505530,
+      "total_volume": 0.0,
+      "unique_bettors": [],
+      "bet_count": 0,
+      "on_leaderboard": false,
+      "option_stats": [
+        {
+          "total_volume": 0.0,
+          "bet_count": 0,
+          "unique_bettors": []
+        },
+        {
+          "total_volume": 0.0,
+          "bet_count": 0,
+          "unique_bettors": []
+        }
+      ],
+      "bets": [],
+      "market_status": "active",
+      "cpmm_pool": null,
+      "provisional_deadline": null,
+      "betting_closes_at": null,
+      "launched_by": null,
+      "source_event_id": null,
+      "source": null,
+      "tags": [],
+      "market_type": null,
+      "initial_probabilities": [],
+      "source_url": null,
+      "image_url": null,
+      "dates": null,
+      "resolution_rules": null
+    },
+    "asml_hutto_jobs_2026": {
+      "id": "asml_hutto_jobs_2026",
+      "title": "Will ASML create 100+ jobs in Hutto, Texas by Q4 2026?",
+      "description": "ASML's 35,000 sq ft Hutto lease with plans for 100+ jobs at $85K average salary. With €30-35B 2025 revenue and 100% EUV monopoly, the Dutch semiconductor giant is expanding in Texas. Market resolves YES if job target met.",
+      "category": "business",
+      "options": [
+        "Yes",
+        "No"
+      ],
+      "is_resolved": false,
+      "winning_option": null,
+      "escrow_address": "escrow_0d5b76d7e44a43b990d787aacc0d7c6c",
       "created_at": 1765505530,
       "total_volume": 0.0,
       "unique_bettors": [],
@@ -194,290 +613,6 @@
       },
       "resolution_rules": null
     },
-    "stevewilldoit_youtube_2026": {
-      "id": "stevewilldoit_youtube_2026",
-      "title": "Will SteveWillDoIt be reinstated on YouTube by Jan 1, 2026?",
-      "description": "YouTuber Stephen Deleonardis (SteveWillDoIt) was banned in 2022 for severe violations involving gambling promotions. Reports suggest potential reinstatement by January 1, 2026. Market resolves YES if channel becomes active.",
-      "category": "culture",
-      "options": [
-        "Yes",
-        "No"
-      ],
-      "is_resolved": false,
-      "winning_option": null,
-      "escrow_address": "escrow_d40fb0d3639943d6b249022d9898a466",
-      "created_at": 1765505530,
-      "total_volume": 0.0,
-      "unique_bettors": [],
-      "bet_count": 0,
-      "on_leaderboard": false,
-      "option_stats": [
-        {
-          "total_volume": 0.0,
-          "bet_count": 0,
-          "unique_bettors": []
-        },
-        {
-          "total_volume": 0.0,
-          "bet_count": 0,
-          "unique_bettors": []
-        }
-      ],
-      "bets": [],
-      "market_status": "active",
-      "cpmm_pool": null,
-      "provisional_deadline": null,
-      "betting_closes_at": null,
-      "launched_by": null,
-      "source_event_id": null,
-      "source": null,
-      "tags": [],
-      "market_type": null,
-      "initial_probabilities": [],
-      "source_url": null,
-      "image_url": null,
-      "dates": null,
-      "resolution_rules": null
-    },
-    "asml_hutto_jobs_2026": {
-      "id": "asml_hutto_jobs_2026",
-      "title": "Will ASML create 100+ jobs in Hutto, Texas by Q4 2026?",
-      "description": "ASML's 35,000 sq ft Hutto lease with plans for 100+ jobs at $85K average salary. With €30-35B 2025 revenue and 100% EUV monopoly, the Dutch semiconductor giant is expanding in Texas. Market resolves YES if job target met.",
-      "category": "business",
-      "options": [
-        "Yes",
-        "No"
-      ],
-      "is_resolved": false,
-      "winning_option": null,
-      "escrow_address": "escrow_0d5b76d7e44a43b990d787aacc0d7c6c",
-      "created_at": 1765505530,
-      "total_volume": 0.0,
-      "unique_bettors": [],
-      "bet_count": 0,
-      "on_leaderboard": false,
-      "option_stats": [
-        {
-          "total_volume": 0.0,
-          "bet_count": 0,
-          "unique_bettors": []
-        },
-        {
-          "total_volume": 0.0,
-          "bet_count": 0,
-          "unique_bettors": []
-        }
-      ],
-      "bets": [],
-      "market_status": "active",
-      "cpmm_pool": null,
-      "provisional_deadline": null,
-      "betting_closes_at": null,
-      "launched_by": null,
-      "source_event_id": null,
-      "source": null,
-      "tags": [],
-      "market_type": null,
-      "initial_probabilities": [],
-      "source_url": null,
-      "image_url": null,
-      "dates": null,
-      "resolution_rules": null
-    },
-    "meta_ai_chip_migration_2026": {
-      "id": "meta_ai_chip_migration_2026",
-      "title": "Will Meta complete AI chip migration from NVIDIA by end of 2026?",
-      "description": "Meta Platforms is exploring a shift from NVIDIA GPUs to Google's parent company TPUs and custom compute chips for AI workloads. Market resolves YES if Meta announces 25%+ migration to non-NVIDIA hardware by Dec 31, 2026.",
-      "category": "tech",
-      "options": [
-        "Yes",
-        "No"
-      ],
-      "is_resolved": false,
-      "winning_option": null,
-      "escrow_address": "escrow_deb26e39b9fa44fa85b14379ddbbb2ac",
-      "created_at": 1765505530,
-      "total_volume": 0.0,
-      "unique_bettors": [],
-      "bet_count": 0,
-      "on_leaderboard": false,
-      "option_stats": [
-        {
-          "total_volume": 0.0,
-          "bet_count": 0,
-          "unique_bettors": []
-        },
-        {
-          "total_volume": 0.0,
-          "bet_count": 0,
-          "unique_bettors": []
-        }
-      ],
-      "bets": [],
-      "market_status": "active",
-      "cpmm_pool": null,
-      "provisional_deadline": null,
-      "betting_closes_at": null,
-      "launched_by": null,
-      "source_event_id": null,
-      "source": null,
-      "tags": [],
-      "market_type": null,
-      "initial_probabilities": [],
-      "source_url": null,
-      "image_url": null,
-      "dates": null,
-      "resolution_rules": null
-    },
-    "ramaco_rare_earth_mine_2026": {
-      "id": "ramaco_rare_earth_mine_2026",
-      "title": "Will Ramaco's Wyoming rare earth mine reach production by Dec 2026?",
-      "description": "Ramaco's Brook Mine in Wyoming is the first U.S. rare earth mine opened in 70+ years. Projected output: 1,242 tons of oxides annually from 2 million tons of coal. Market resolves YES if commercial production begins by end of 2026.",
-      "category": "business",
-      "options": [
-        "Yes",
-        "No"
-      ],
-      "is_resolved": false,
-      "winning_option": null,
-      "escrow_address": "escrow_f2f2cdd6f36e425794e1f33bcc9d36e3",
-      "created_at": 1765505530,
-      "total_volume": 0.0,
-      "unique_bettors": [],
-      "bet_count": 0,
-      "on_leaderboard": false,
-      "option_stats": [
-        {
-          "total_volume": 0.0,
-          "bet_count": 0,
-          "unique_bettors": []
-        },
-        {
-          "total_volume": 0.0,
-          "bet_count": 0,
-          "unique_bettors": []
-        }
-      ],
-      "bets": [],
-      "market_status": "active",
-      "cpmm_pool": null,
-      "provisional_deadline": null,
-      "betting_closes_at": null,
-      "launched_by": null,
-      "source_event_id": null,
-      "source": null,
-      "tags": [],
-      "market_type": null,
-      "initial_probabilities": [],
-      "source_url": null,
-      "image_url": null,
-      "dates": null,
-      "resolution_rules": null
-    },
-    "zelle_stablecoin_2026": {
-      "id": "zelle_stablecoin_2026",
-      "title": "Will Zelle launch international stablecoin payments by Q3 2026?",
-      "description": "Zelle, processing $1 trillion in 2024, explores stablecoin adoption for international payments. With GENIUS Act providing regulatory clarity, market resolves YES if Zelle launches stablecoin-based cross-border payments by Sept 30, 2026.",
-      "category": "crypto",
-      "options": [
-        "Yes",
-        "No"
-      ],
-      "is_resolved": false,
-      "winning_option": null,
-      "escrow_address": "escrow_16ae72f312524f3c8499255064e4d6d7",
-      "created_at": 1765505530,
-      "total_volume": 0.0,
-      "unique_bettors": [],
-      "bet_count": 0,
-      "on_leaderboard": false,
-      "option_stats": [
-        {
-          "total_volume": 0.0,
-          "bet_count": 0,
-          "unique_bettors": []
-        },
-        {
-          "total_volume": 0.0,
-          "bet_count": 0,
-          "unique_bettors": []
-        }
-      ],
-      "bets": [],
-      "market_status": "active",
-      "cpmm_pool": null,
-      "provisional_deadline": null,
-      "betting_closes_at": null,
-      "launched_by": null,
-      "source_event_id": null,
-      "source": null,
-      "tags": [],
-      "market_type": null,
-      "initial_probabilities": [],
-      "source_url": null,
-      "image_url": null,
-      "dates": null,
-      "resolution_rules": null
-    },
-    "andrew-tate-fight-date-4c9be9": {
-      "id": "andrew-tate-fight-date-4c9be9",
-      "title": "Will 'Andrew Tate fight date, UK start time and Misfits ' predictions come true?",
-      "description": "Based on: Andrew Tate fight date, UK start time and Misfits fight card - The Mirror",
-      "category": "general",
-      "options": [
-        "Yes",
-        "No Change",
-        "No"
-      ],
-      "is_resolved": false,
-      "winning_option": null,
-      "escrow_address": "escrow_cc6aef6858ed41a9b339fb4d4736630f",
-      "created_at": 1765766796,
-      "total_volume": 0.0,
-      "unique_bettors": [],
-      "bet_count": 0,
-      "on_leaderboard": false,
-      "option_stats": [
-        {
-          "total_volume": 0.0,
-          "bet_count": 0,
-          "unique_bettors": []
-        },
-        {
-          "total_volume": 0.0,
-          "bet_count": 0,
-          "unique_bettors": []
-        },
-        {
-          "total_volume": 0.0,
-          "bet_count": 0,
-          "unique_bettors": []
-        }
-      ],
-      "bets": [],
-      "market_status": "active",
-      "cpmm_pool": null,
-      "provisional_deadline": null,
-      "betting_closes_at": null,
-      "launched_by": null,
-      "source_event_id": null,
-      "source": "andrew-tate-fight-date-4c9be9",
-      "tags": [],
-      "market_type": "three_choice",
-      "initial_probabilities": [
-        0.49,
-        0.02,
-        0.49
-      ],
-      "source_url": "https://www.mirror.co.uk/sport/boxing/andrew-tate-fight-date-uk-36351199",
-      "image_url": null,
-      "dates": {
-        "published": "2025-12-15T02:46:34.915002+00:00",
-        "freeze": null,
-        "resolution": null
-      },
-      "resolution_rules": null
-    },
     "google_texas_settlement_2026": {
       "id": "google_texas_settlement_2026",
       "title": "Will Google settle with Texas for $1.375B over privacy violations?",
@@ -502,51 +637,6 @@
           "bet_count": 0,
           "unique_bettors": []
         },
-        {
-          "total_volume": 0.0,
-          "bet_count": 0,
-          "unique_bettors": []
-        },
-        {
-          "total_volume": 0.0,
-          "bet_count": 0,
-          "unique_bettors": []
-        }
-      ],
-      "bets": [],
-      "market_status": "active",
-      "cpmm_pool": null,
-      "provisional_deadline": null,
-      "betting_closes_at": null,
-      "launched_by": null,
-      "source_event_id": null,
-      "source": null,
-      "tags": [],
-      "market_type": null,
-      "initial_probabilities": [],
-      "source_url": null,
-      "image_url": null,
-      "dates": null,
-      "resolution_rules": null
-    },
-    "ny_raise_act_2026": {
-      "id": "ny_raise_act_2026",
-      "title": "Will NY RAISE Act require AI incident reporting by March 2026?",
-      "description": "New York's RAISE Act, reintroduced October 22, 2025, compels developers of generative AI models to publish safety protocols and report harmful incidents. Market resolves YES if law passes and becomes enforceable by March 2026.",
-      "category": "politics",
-      "options": [
-        "Yes",
-        "No"
-      ],
-      "is_resolved": false,
-      "winning_option": null,
-      "escrow_address": "escrow_80df8840209b4f73925db830a45d1fe7",
-      "created_at": 1765505530,
-      "total_volume": 0.0,
-      "unique_bettors": [],
-      "bet_count": 0,
-      "on_leaderboard": false,
-      "option_stats": [
         {
           "total_volume": 0.0,
           "bet_count": 0,
@@ -712,18 +802,18 @@
       "dates": null,
       "resolution_rules": null
     },
-    "pegatron_georgetown_2026": {
-      "id": "pegatron_georgetown_2026",
-      "title": "Will Pegatron invest $35M+ in Georgetown facility by end of 2026?",
-      "description": "Pegatron announced plans to invest $35M in Georgetown facility expansion. The Taiwanese electronics manufacturer supplies major tech companies. Market resolves YES if investment completes by December 31, 2026.",
-      "category": "business",
+    "trump_cz_pardon_2026": {
+      "id": "trump_cz_pardon_2026",
+      "title": "Will Trump pardon Binance founder CZ before 2026 midterms?",
+      "description": "Reports suggest Trump may pardon Changpeng Zhao (CZ), former Binance CEO, who faced charges in Biden administration's crypto crackdown. Market resolves YES if presidential pardon issued before November 2026 midterm elections.",
+      "category": "crypto",
       "options": [
         "Yes",
         "No"
       ],
       "is_resolved": false,
       "winning_option": null,
-      "escrow_address": "escrow_7a90d62cd32c4ea38621e16dff10eb2f",
+      "escrow_address": "escrow_7b4d9b1477154841bf0f96211bc546d6",
       "created_at": 1765505530,
       "total_volume": 0.0,
       "unique_bettors": [],
@@ -757,10 +847,10 @@
       "dates": null,
       "resolution_rules": null
     },
-    "tesla_robotaxi_safety_2026": {
-      "id": "tesla_robotaxi_safety_2026",
-      "title": "Will Tesla Robotaxis reduce crash rate by 30% in 2026?",
-      "description": "Tesla's robotaxis continue experiencing crashes despite safety monitors. Market resolves YES if Tesla reports 30%+ reduction in crash rates for autonomous vehicles operating with safety monitors by December 31, 2026.",
+    "palantir_army_contract_2026": {
+      "id": "palantir_army_contract_2026",
+      "title": "Will Palantir's $10B Army contract deliver first deployment by Q2 2026?",
+      "description": "Palantir secured landmark $10 billion U.S. Army contract on July 31, 2025, cementing its role as military tech titan. Market resolves YES if first major deployment occurs by June 30, 2026 under this contract.",
       "category": "tech",
       "options": [
         "Yes",
@@ -768,97 +858,7 @@
       ],
       "is_resolved": false,
       "winning_option": null,
-      "escrow_address": "escrow_ea5d19c0aa944921bcb5df8b10da3c7b",
-      "created_at": 1765505530,
-      "total_volume": 0.0,
-      "unique_bettors": [],
-      "bet_count": 0,
-      "on_leaderboard": false,
-      "option_stats": [
-        {
-          "total_volume": 0.0,
-          "bet_count": 0,
-          "unique_bettors": []
-        },
-        {
-          "total_volume": 0.0,
-          "bet_count": 0,
-          "unique_bettors": []
-        }
-      ],
-      "bets": [],
-      "market_status": "active",
-      "cpmm_pool": null,
-      "provisional_deadline": null,
-      "betting_closes_at": null,
-      "launched_by": null,
-      "source_event_id": null,
-      "source": null,
-      "tags": [],
-      "market_type": null,
-      "initial_probabilities": [],
-      "source_url": null,
-      "image_url": null,
-      "dates": null,
-      "resolution_rules": null
-    },
-    "silicon_labs_stock_2026": {
-      "id": "silicon_labs_stock_2026",
-      "title": "Will Silicon Labs stock outperform semiconductor sector in 2026?",
-      "description": "Silicon Labs focuses on IoT connectivity chips with 99.9% uptime and 50% power savings. With 6G and quantum security developments targeting 2030's $100B market, will stock beat semiconductor index by year-end 2026?",
-      "category": "business",
-      "options": [
-        "Yes",
-        "No"
-      ],
-      "is_resolved": false,
-      "winning_option": null,
-      "escrow_address": "escrow_555091b3da534e44b0d47c09f3e7af95",
-      "created_at": 1765505530,
-      "total_volume": 0.0,
-      "unique_bettors": [],
-      "bet_count": 0,
-      "on_leaderboard": false,
-      "option_stats": [
-        {
-          "total_volume": 0.0,
-          "bet_count": 0,
-          "unique_bettors": []
-        },
-        {
-          "total_volume": 0.0,
-          "bet_count": 0,
-          "unique_bettors": []
-        }
-      ],
-      "bets": [],
-      "market_status": "active",
-      "cpmm_pool": null,
-      "provisional_deadline": null,
-      "betting_closes_at": null,
-      "launched_by": null,
-      "source_event_id": null,
-      "source": null,
-      "tags": [],
-      "market_type": null,
-      "initial_probabilities": [],
-      "source_url": null,
-      "image_url": null,
-      "dates": null,
-      "resolution_rules": null
-    },
-    "texas_sb2420_2026": {
-      "id": "texas_sb2420_2026",
-      "title": "Will Texas SB 2420 require parental consent for minors by Feb 2026?",
-      "description": "Texas Senate Bill 2420, the App Store Accountability Act (ASAA), requires app store operators and developers to verify user ages and secure parental consent for minors. Effective January 1, 2026, targeting 7.5 million minors in Texas.",
-      "category": "politics",
-      "options": [
-        "Yes",
-        "No"
-      ],
-      "is_resolved": false,
-      "winning_option": null,
-      "escrow_address": "escrow_2c223adcc8184f2295d634b04983477a",
+      "escrow_address": "escrow_e6f586f25d194feaa07aa53a1d7d3627",
       "created_at": 1765505530,
       "total_volume": 0.0,
       "unique_bettors": [],
@@ -894,7 +894,7 @@
     }
   },
   "nonces": {
-    "L1ALICE000000001": 5,
-    "L1162E2981E145A8": 3
+    "L1162E2981E145A8": 3,
+    "L1ALICE000000001": 5
   }
 }

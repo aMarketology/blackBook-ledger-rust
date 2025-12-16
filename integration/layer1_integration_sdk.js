@@ -6,20 +6,30 @@
 // Includes full cross-layer RPC support for L2 prediction market.
 //
 // ARCHITECTURE:
-//   L1 (Port 8080) - Source of truth, token custody, PoH consensus
+//   L1 (Port 8080) - Source of truth, token custody, PoH consensus, Tower BFT
 //   L2 (Port 1234) - Prediction market, instant bets, optimistic execution
 //
+// FEATURES:
+//   - Solana-compatible RPC methods (getRecentBlockhash, isBlockhashValid, etc.)
+//   - Cross-layer signature verification
+//   - Transaction building with recent blockhash
+//   - Full L2 betting integration
+//   - Tower BFT consensus queries
+//
 // USAGE:
-//   import { L1Client, L2RpcClient } from './layer1_integration_sdk.js';
+//   import { L1Client, L2Client, L2RpcClient } from './layer1_integration_sdk.js';
 //   
 //   // L1 Client (read-only blockchain queries)
 //   const l1 = new L1Client('http://localhost:8080');
 //   const balance = await l1.getBalance('L1ALICE000000001');
 //   
+//   // L2 Client (direct prediction market access)
+//   const l2 = new L2Client('http://localhost:1234');
+//   const markets = await l2.getMarkets();
+//   
 //   // L2 RPC Client (for L2 server to communicate with L1)
 //   const l2rpc = new L2RpcClient('http://localhost:8080');
 //   const valid = await l2rpc.verifyUserSignature(pubKey, message, sig);
-//   await l2rpc.recordSettlement({ marketId, outcome, winners, l2BlockHeight });
 //
 // ============================================================================
 
@@ -28,11 +38,19 @@
 // ============================================================================
 
 function generateNonce() {
+  // Use cryptographic RNG - never fall back to Math.random()
   if (typeof crypto !== 'undefined' && crypto.randomUUID) {
     return crypto.randomUUID();
   }
-  return 'xxxx-xxxx-xxxx'.replace(/x/g, () => 
-    Math.floor(Math.random() * 16).toString(16)
+  // Fallback using getRandomValues if randomUUID not available
+  if (typeof crypto !== 'undefined' && crypto.getRandomValues) {
+    const array = new Uint8Array(16);
+    crypto.getRandomValues(array);
+    return Array.from(array, b => b.toString(16).padStart(2, '0')).join('');
+  }
+  throw new Error(
+    'Secure random number generator not available. ' +
+    'Use a modern browser with Web Crypto API.'
   );
 }
 
@@ -50,6 +68,9 @@ const DEFAULT_CONFIG = {
   TIMEOUT: 30000,  // 30 second timeout
   RETRY_ATTEMPTS: 3,
   RETRY_DELAY: 1000,  // 1 second between retries
+  BLOCKHASH_TTL_SLOTS: 150,  // Blockhash valid for 150 slots
+  LAMPORTS_PER_BB: 1_000_000, // 1 BB = 1,000,000 lamports
+  TX_FEE_LAMPORTS: 5000,  // Default transaction fee
 };
 
 // ============================================================================
@@ -397,6 +418,100 @@ export class L1Client {
     } catch {
       return null;
     }
+  }
+
+  // ==========================================================================
+  // RECENT BLOCKHASH (Solana-compatible)
+  // ==========================================================================
+
+  /**
+   * Get recent blockhash for transaction construction (Solana-compatible)
+   * Transactions must include a recent blockhash to be valid
+   * @returns {Promise<Object>} { blockhash, feeCalculator, slot, lastValidBlockHeight }
+   */
+  async getRecentBlockhash() {
+    return await this.rpc('getRecentBlockhash');
+  }
+
+  /**
+   * Get latest blockhash (Solana v1.9+ compatible)
+   * @returns {Promise<Object>} { value: { blockhash, lastValidBlockHeight }, context: { slot } }
+   */
+  async getLatestBlockhash() {
+    return await this.rpc('getLatestBlockhash');
+  }
+
+  /**
+   * Check if a blockhash is still valid for transactions
+   * @param {string} blockhash - The blockhash to check
+   * @returns {Promise<Object>} { value: boolean, context: { slot } }
+   */
+  async isBlockhashValid(blockhash) {
+    return await this.rpc('isBlockhashValid', [blockhash]);
+  }
+
+  /**
+   * Get detailed blockhash expiry info
+   * @param {string} blockhash - The blockhash to check
+   * @returns {Promise<Object>} { blockhash, slot, isValid, ageSlots, remainingSlots, expiresAtSlot }
+   */
+  async getBlockhashExpiry(blockhash) {
+    return await this.rpc('getBlockhashExpiry', [blockhash]);
+  }
+
+  /**
+   * Get current slot
+   * @returns {Promise<number>}
+   */
+  async getSlot() {
+    const poh = await this.getPoHStatus();
+    return poh.poh?.current_slot || 0;
+  }
+
+  /**
+   * Get slot leader (validator that produced a slot)
+   * @param {number} [slot] - Specific slot, or current if not provided
+   * @returns {Promise<Object>} { slot, leader, sequencer, blockProduced }
+   */
+  async getSlotLeader(slot = null) {
+    return await this.rpc('getSlotLeader', slot ? [slot] : []);
+  }
+
+  /**
+   * Get fee for a transaction message
+   * @returns {Promise<Object>} { value: lamports, context: { slot } }
+   */
+  async getFeeForMessage() {
+    return await this.rpc('getFeeForMessage');
+  }
+
+  /**
+   * Get minimum balance for rent exemption
+   * @param {number} [dataSize=0] - Size of account data in bytes
+   * @returns {Promise<Object>} { value: lamports, dataSize, baseLamports, perByteLamports }
+   */
+  async getMinimumBalanceForRentExemption(dataSize = 0) {
+    return await this.rpc('getMinimumBalanceForRentExemption', [dataSize]);
+  }
+
+  // ==========================================================================
+  // CHAIN STATS (Solana-compatible)
+  // ==========================================================================
+
+  /**
+   * Get comprehensive chain stats via RPC
+   * @returns {Promise<Object>}
+   */
+  async getChainStats() {
+    return await this.rpc('getChainStats');
+  }
+
+  /**
+   * Get wallet count
+   * @returns {Promise<number>}
+   */
+  async getWalletCount() {
+    return await this.rpc('getWalletCount');
   }
 
   // ==========================================================================
@@ -1294,19 +1409,29 @@ export class L2RpcClient {
 
 /**
  * L2 Client for direct communication with L2 prediction market
- * Use this for frontend/dApp integration
+ * Full-featured SDK for frontend/dApp integration with betting, markets, and cross-layer ops
  */
 export class L2Client {
   /**
    * Create L2 Client
    * @param {string} [l2Url] - L2 server URL
-   * @param {Object} [options] - Options
+   * @param {Object} [options] - Options including l1Url for cross-layer operations
    */
   constructor(l2Url = null, options = {}) {
     this.l2Url = l2Url || DEFAULT_CONFIG.L2_URL;
+    this.l1Url = options.l1Url || DEFAULT_CONFIG.L1_URL;
     this.debug = options.debug || false;
+    this.timeout = options.timeout || DEFAULT_CONFIG.TIMEOUT;
+    
+    // Auth state
     this.walletAddress = null;
     this.publicKey = null;
+    this.privateKey = null; // Optional - for signing
+    this.jwt = null;
+    
+    // Connection state
+    this.isOnline = false;
+    this.lastSync = null;
   }
 
   _log(...args) {
@@ -1319,20 +1444,35 @@ export class L2Client {
     const url = `${this.l2Url}${endpoint}`;
     this._log('Fetching:', url);
     
-    const response = await fetch(url, {
-      ...options,
-      headers: {
-        'Content-Type': 'application/json',
-        ...options.headers,
-      },
-    });
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), this.timeout);
     
-    if (!response.ok) {
-      const error = await response.text();
-      throw new Error(`HTTP ${response.status}: ${error}`);
+    try {
+      const response = await fetch(url, {
+        ...options,
+        signal: controller.signal,
+        headers: {
+          'Content-Type': 'application/json',
+          ...(this.jwt && { 'Authorization': `Bearer ${this.jwt}` }),
+          ...options.headers,
+        },
+      });
+      
+      clearTimeout(timeoutId);
+      
+      if (!response.ok) {
+        const error = await response.text();
+        throw new Error(`HTTP ${response.status}: ${error}`);
+      }
+      
+      return await response.json();
+    } catch (error) {
+      clearTimeout(timeoutId);
+      if (error.name === 'AbortError') {
+        throw new Error(`Request timeout after ${this.timeout}ms`);
+      }
+      throw error;
     }
-    
-    return await response.json();
   }
 
   async _post(endpoint, body) {
@@ -1343,11 +1483,11 @@ export class L2Client {
   }
 
   // ==========================================================================
-  // AUTHENTICATION
+  // AUTHENTICATION & CONNECTION
   // ==========================================================================
 
   /**
-   * Connect wallet to L2
+   * Connect wallet to L2 (basic connection)
    * @param {string} address - L1 wallet address
    * @param {string} publicKey - Public key for signature verification
    * @returns {Promise<Object>}
@@ -1364,9 +1504,43 @@ export class L2Client {
     if (result.success) {
       this.walletAddress = address;
       this.publicKey = publicKey;
+      this.isOnline = true;
     }
 
     return result;
+  }
+
+  /**
+   * Login with Supabase JWT
+   * @param {string} jwt - Supabase JWT token
+   * @param {string} [username] - Optional username
+   * @returns {Promise<Object>}
+   */
+  async loginWithJWT(jwt, username = null) {
+    this.jwt = jwt;
+    
+    const result = await this._post('/auth/login', {
+      token: jwt,
+      username: username,
+    });
+
+    if (result.success && result.wallet_address) {
+      this.walletAddress = result.wallet_address;
+      this.isOnline = true;
+    }
+
+    return result;
+  }
+
+  /**
+   * Disconnect wallet
+   */
+  disconnect() {
+    this.walletAddress = null;
+    this.publicKey = null;
+    this.privateKey = null;
+    this.jwt = null;
+    this.isOnline = false;
   }
 
   /**
@@ -1374,24 +1548,128 @@ export class L2Client {
    * @returns {boolean}
    */
   isConnected() {
-    return !!this.walletAddress;
+    return this.isOnline && !!this.walletAddress;
   }
 
   // ==========================================================================
-  // MARKETS
+  // SIGNING - Ed25519 Signature Support
+  // ==========================================================================
+
+  /**
+   * Set private key for signing (hex string, 64 chars = 32 bytes seed)
+   * @param {string} privateKeyHex - 64-character hex private key seed
+   * @returns {string} Derived public key
+   */
+  setPrivateKey(privateKeyHex) {
+    if (!/^[0-9a-fA-F]{64}$/.test(privateKeyHex)) {
+      throw new Error('Invalid private key format. Must be 64-character hex string (32 bytes).');
+    }
+    
+    // For full Ed25519 signing, you'd use tweetnacl or similar
+    // This is a placeholder - the actual signing happens if tweetnacl is available
+    this.privateKey = privateKeyHex;
+    // Derive public key would require nacl.sign.keyPair.fromSeed()
+    this._log('Private key set. For full signing, import tweetnacl.');
+    
+    return this.publicKey;
+  }
+
+  /**
+   * Create a signed bet request
+   * @param {string} marketId - Market ID
+   * @param {string} option - 'yes' or 'no' (or '0'/'1')
+   * @param {number} amount - Bet amount
+   * @param {Function} [signFn] - Optional external signing function
+   * @returns {Object} Signed bet request
+   */
+  createSignedBetRequest(marketId, option, amount, signFn = null) {
+    if (!this.walletAddress) throw new Error('Wallet not connected');
+    
+    const timestamp = getTimestamp();
+    const nonce = generateNonce();
+    const optionNormalized = option === 'yes' || option === '0' ? '0' : '1';
+    
+    // Create message to sign
+    const message = `bet:${this.walletAddress}:${marketId}:${optionNormalized}:${amount}:${timestamp}:${nonce}`;
+    
+    // Sign if function provided
+    let signature = '0'.repeat(128); // Placeholder
+    if (signFn && typeof signFn === 'function') {
+      signature = signFn(message);
+    }
+    
+    return {
+      public_key: this.publicKey || this.walletAddress,
+      wallet_address: this.walletAddress,
+      market_id: marketId,
+      option: optionNormalized,
+      amount: parseFloat(amount),
+      timestamp,
+      nonce,
+      signature,
+      payload: message,
+    };
+  }
+
+  /**
+   * Create a signed transfer request
+   * @param {string} to - Recipient address
+   * @param {number} amount - Amount
+   * @param {Function} [signFn] - Optional external signing function
+   * @returns {Object} Signed transfer request
+   */
+  createSignedTransferRequest(to, amount, signFn = null) {
+    if (!this.walletAddress) throw new Error('Wallet not connected');
+    
+    const timestamp = getTimestamp();
+    const nonce = generateNonce();
+    
+    const message = `transfer:${this.walletAddress}:${to}:${amount}:${timestamp}:${nonce}`;
+    
+    let signature = '0'.repeat(128);
+    if (signFn && typeof signFn === 'function') {
+      signature = signFn(message);
+    }
+    
+    return {
+      public_key: this.publicKey || this.walletAddress,
+      wallet_address: this.walletAddress,
+      to,
+      amount: parseFloat(amount),
+      timestamp,
+      nonce,
+      signature,
+      payload: message,
+    };
+  }
+
+  // ==========================================================================
+  // MARKETS - Full Market Management
   // ==========================================================================
 
   /**
    * Get all prediction markets
+   * @param {Object} [filters] - Optional filters
+   * @param {string} [filters.status] - 'open', 'closed', 'resolved'
+   * @param {string} [filters.category] - Market category
+   * @param {number} [filters.limit] - Max results
    * @returns {Promise<Array>}
    */
-  async getMarkets() {
-    const result = await this._fetch('/markets');
-    return result.markets || [];
+  async getMarkets(filters = {}) {
+    const params = new URLSearchParams();
+    if (filters.status) params.append('status', filters.status);
+    if (filters.category) params.append('category', filters.category);
+    if (filters.limit) params.append('limit', filters.limit);
+    
+    const query = params.toString();
+    const endpoint = query ? `/markets?${query}` : '/markets';
+    
+    const result = await this._fetch(endpoint);
+    return result.markets || result || [];
   }
 
   /**
-   * Get specific market
+   * Get specific market by ID
    * @param {string} marketId - Market ID
    * @returns {Promise<Object>}
    */
@@ -1400,76 +1678,433 @@ export class L2Client {
   }
 
   /**
-   * Create a new market
-   * @param {Object} market - Market config
+   * Get market odds/probabilities
+   * @param {string} marketId - Market ID
+   * @returns {Promise<Object>} { yes_probability, no_probability, total_pool }
+   */
+  async getMarketOdds(marketId) {
+    try {
+      return await this._fetch(`/markets/${marketId}/odds`);
+    } catch {
+      // Fallback: calculate from market data
+      const market = await this.getMarket(marketId);
+      const total = (market.yes_pool || 0) + (market.no_pool || 0);
+      return {
+        yes_probability: total > 0 ? (market.yes_pool || 0) / total : 0.5,
+        no_probability: total > 0 ? (market.no_pool || 0) / total : 0.5,
+        total_pool: total,
+      };
+    }
+  }
+
+  /**
+   * Create a new prediction market
+   * @param {Object} market - Market configuration
+   * @param {string} market.title - Market question
+   * @param {string} market.description - Detailed description
+   * @param {string} market.category - Category (sports, crypto, politics, etc.)
+   * @param {number} market.endTime - Unix timestamp when betting closes
+   * @param {number} [market.initialLiquidity] - Initial liquidity to add
    * @returns {Promise<Object>}
    */
   async createMarket(market) {
-    return await this._post('/markets', market);
+    this._log('Creating market:', market.title);
+    return await this._post('/markets', {
+      title: market.title,
+      description: market.description,
+      category: market.category,
+      end_time: market.endTime,
+      initial_liquidity: market.initialLiquidity || 0,
+      creator: this.walletAddress,
+    });
+  }
+
+  /**
+   * Resolve a market (admin only)
+   * @param {string} marketId - Market ID
+   * @param {string} outcome - 'yes' or 'no'
+   * @returns {Promise<Object>}
+   */
+  async resolveMarket(marketId, outcome) {
+    return await this._post(`/markets/${marketId}/resolve`, {
+      outcome: outcome,
+      resolver: this.walletAddress,
+    });
   }
 
   // ==========================================================================
-  // BETTING
+  // BETTING - Place and Track Bets
   // ==========================================================================
 
   /**
-   * Place a signed bet
-   * @param {Object} bet - Bet parameters
-   * @param {string} bet.signature - Ed25519 signature
-   * @param {string} bet.from_address - Wallet address
-   * @param {string} bet.market_id - Market ID
-   * @param {string} bet.option - '0' (YES) or '1' (NO)
-   * @param {number} bet.amount - Bet amount
-   * @param {number} bet.nonce - Transaction nonce
-   * @param {number} bet.timestamp - Unix timestamp
+   * Place a bet (simple, for connected users)
+   * @param {string} marketId - Market ID
+   * @param {string} option - 'yes' or 'no' (or '0'/'1')
+   * @param {number} amount - Bet amount in BB
    * @returns {Promise<Object>}
    */
-  async placeBet(bet) {
-    this._log('Placing bet:', bet.market_id, bet.amount);
+  async placeBet(marketId, option, amount) {
+    if (!this.walletAddress) {
+      throw new Error('Wallet not connected. Call connectWallet() first.');
+    }
+    
+    const optionNormalized = option === 'yes' || option === '0' ? '0' : '1';
+    
+    this._log('Placing bet:', marketId, option, amount);
+    
+    return await this._post('/bet', {
+      from_address: this.walletAddress,
+      market_id: marketId,
+      option: optionNormalized,
+      amount: amount,
+      timestamp: getTimestamp(),
+    });
+  }
+
+  /**
+   * Place a signed bet (with Ed25519 signature)
+   * @param {Object} bet - Full signed bet object
+   * @returns {Promise<Object>}
+   */
+  async placeSignedBet(bet) {
+    this._log('Placing signed bet:', bet.market_id, bet.amount);
     return await this._post('/bet/signed', bet);
   }
 
   /**
-   * Get bets for an account
-   * @param {string} account - Account name or address
+   * Get user's bets
+   * @param {string} [address] - Address (defaults to connected wallet)
    * @returns {Promise<Array>}
    */
-  async getBets(account) {
-    const result = await this._fetch(`/bets/${account}`);
-    return result.bets || [];
+  async getMyBets(address = null) {
+    const addr = address || this.walletAddress;
+    if (!addr) throw new Error('No address specified');
+    
+    const result = await this._fetch(`/bets/${addr}`);
+    return result.bets || result || [];
+  }
+
+  /**
+   * Get bets for a specific market
+   * @param {string} marketId - Market ID
+   * @returns {Promise<Array>}
+   */
+  async getMarketBets(marketId) {
+    const result = await this._fetch(`/markets/${marketId}/bets`);
+    return result.bets || result || [];
+  }
+
+  /**
+   * Get bet by ID
+   * @param {string} betId - Bet ID
+   * @returns {Promise<Object>}
+   */
+  async getBet(betId) {
+    return await this._fetch(`/bet/${betId}`);
   }
 
   // ==========================================================================
-  // BALANCES
+  // BALANCES - L2 Balance Management
   // ==========================================================================
 
   /**
-   * Get balance for an account
-   * @param {string} account - Account name or address
-   * @returns {Promise<Object>}
+   * Get L2 balance for an account
+   * @param {string} [address] - Account address (defaults to connected wallet)
+   * @returns {Promise<Object>} { balance, available, locked, pending_bets }
    */
-  async getBalance(account) {
-    return await this._fetch(`/balance/${account}`);
+  async getBalance(address = null) {
+    const addr = address || this.walletAddress;
+    if (!addr) throw new Error('No address specified');
+    return await this._fetch(`/balance/${addr}`);
   }
 
   /**
    * Get detailed balance breakdown
-   * @param {string} account - Account name or address
+   * @param {string} [address] - Account address
    * @returns {Promise<Object>}
    */
-  async getBalanceDetails(account) {
-    return await this._fetch(`/balance/details/${account}`);
+  async getBalanceDetails(address = null) {
+    const addr = address || this.walletAddress;
+    if (!addr) throw new Error('No address specified');
+    return await this._fetch(`/balance/details/${addr}`);
   }
 
   /**
-   * Transfer tokens
-   * @param {string} from - From account
-   * @param {string} to - To account
-   * @param {number} amount - Amount
+   * Get unified balance (L1 + L2)
+   * @param {string} [address] - Account address
+   * @returns {Promise<Object>} { l1_balance, l2_balance, total, pending_bridge }
+   */
+  async getUnifiedBalance(address = null) {
+    const addr = address || this.walletAddress;
+    if (!addr) throw new Error('No address specified');
+    
+    try {
+      return await this._fetch(`/balance/unified/${addr}`);
+    } catch {
+      // Fallback: fetch separately
+      const l2 = await this.getBalance(addr);
+      return {
+        l1_balance: 0,
+        l2_balance: l2.balance || 0,
+        total: l2.balance || 0,
+        pending_bridge: 0,
+      };
+    }
+  }
+
+  /**
+   * Transfer tokens within L2
+   * @param {string} to - Recipient address
+   * @param {number} amount - Amount in BB
    * @returns {Promise<Object>}
    */
-  async transfer(from, to, amount) {
-    return await this._post('/transfer', { from, to, amount });
+  async transfer(to, amount) {
+    if (!this.walletAddress) throw new Error('Wallet not connected');
+    return await this._post('/transfer', { 
+      from: this.walletAddress, 
+      to, 
+      amount 
+    });
+  }
+
+  // ==========================================================================
+  // BRIDGE - Cross-Layer Operations
+  // ==========================================================================
+
+  /**
+   * Deposit from L1 to L2 (bridge tokens)
+   * @param {number} amount - Amount to bridge
+   * @returns {Promise<Object>}
+   */
+  async deposit(amount) {
+    if (!this.walletAddress) throw new Error('Wallet not connected');
+    return await this._post('/bridge/deposit', {
+      address: this.walletAddress,
+      amount: amount,
+    });
+  }
+
+  /**
+   * Withdraw from L2 to L1 (unbridge tokens)
+   * @param {number} amount - Amount to withdraw
+   * @returns {Promise<Object>}
+   */
+  async withdraw(amount) {
+    if (!this.walletAddress) throw new Error('Wallet not connected');
+    return await this._post('/bridge/withdraw', {
+      address: this.walletAddress,
+      amount: amount,
+    });
+  }
+
+  /**
+   * Get bridge status for pending operations
+   * @param {string} [bridgeId] - Specific bridge ID, or all for user
+   * @returns {Promise<Object>}
+   */
+  async getBridgeStatus(bridgeId = null) {
+    if (bridgeId) {
+      return await this._fetch(`/bridge/status/${bridgeId}`);
+    }
+    return await this._fetch(`/bridge/pending/${this.walletAddress}`);
+  }
+
+  // ==========================================================================
+  // LEADERBOARDS & STATS
+  // ==========================================================================
+
+  /**
+   * Get overall leaderboard
+   * @param {number} [limit=100] - Max results
+   * @returns {Promise<Array>}
+   */
+  async getLeaderboard(limit = 100) {
+    try {
+      const result = await this._fetch(`/leaderboard?limit=${limit}`);
+      return result.leaderboard || result || [];
+    } catch {
+      return [];
+    }
+  }
+
+  /**
+   * Get leaderboard by category
+   * @param {string} category - Category (sports, crypto, politics, etc.)
+   * @param {number} [limit=100] - Max results
+   * @returns {Promise<Array>}
+   */
+  async getLeaderboardByCategory(category, limit = 100) {
+    try {
+      const result = await this._fetch(`/leaderboard/${category}?limit=${limit}`);
+      return result.leaderboard || result || [];
+    } catch {
+      return [];
+    }
+  }
+
+  /**
+   * Get recent activities (bets, market creations, etc.)
+   * @param {number} [limit=50] - Max results
+   * @returns {Promise<Array>}
+   */
+  async getActivities(limit = 50) {
+    try {
+      const result = await this._fetch(`/activities?limit=${limit}`);
+      return result.activities || result || [];
+    } catch {
+      return [];
+    }
+  }
+
+  /**
+   * Get market statistics
+   * @param {string} marketId - Market ID
+   * @returns {Promise<Object>}
+   */
+  async getMarketStats(marketId) {
+    try {
+      return await this._fetch(`/markets/${marketId}/stats`);
+    } catch {
+      // Fallback to calculating from market
+      const market = await this.getMarket(marketId);
+      return {
+        total_bets: market.total_bets || 0,
+        total_volume: (market.yes_pool || 0) + (market.no_pool || 0),
+        unique_bettors: market.unique_bettors || 0,
+      };
+    }
+  }
+
+  // ==========================================================================
+  // SESSIONS (For Gaming/Betting Sessions)
+  // ==========================================================================
+
+  /**
+   * Start a new gaming session
+   * @param {number} [amount] - Optional initial amount to lock
+   * @returns {Promise<Object>}
+   */
+  async startSession(amount = null) {
+    if (!this.walletAddress) throw new Error('Wallet not connected');
+    const body = { address: this.walletAddress };
+    if (amount !== null) body.amount = amount;
+    return await this._post('/session/start', body);
+  }
+
+  /**
+   * Get session status
+   * @param {string} [address] - Address (defaults to connected wallet)
+   * @returns {Promise<Object>}
+   */
+  async getSessionStatus(address = null) {
+    const addr = address || this.walletAddress;
+    if (!addr) throw new Error('No address specified');
+    return await this._fetch(`/session/status/${addr}`);
+  }
+
+  /**
+   * Settle/close current session
+   * @returns {Promise<Object>}
+   */
+  async settleSession() {
+    if (!this.walletAddress) throw new Error('Wallet not connected');
+    return await this._post('/session/settle', { address: this.walletAddress });
+  }
+
+  /**
+   * List all sessions for connected user
+   * @returns {Promise<Array>}
+   */
+  async listSessions() {
+    if (!this.walletAddress) throw new Error('Wallet not connected');
+    const result = await this._fetch(`/session/list/${this.walletAddress}`);
+    return result.sessions || result || [];
+  }
+
+  // ==========================================================================
+  // LIVE BETTING (Real-time price bets)
+  // ==========================================================================
+
+  /**
+   * Place a live bet (price direction bet)
+   * @param {string} asset - Asset symbol (BTC, SOL, ETH)
+   * @param {string} direction - 'up' or 'down'
+   * @param {number} amount - Bet amount
+   * @param {string} [timeframe='1min'] - Timeframe for bet resolution
+   * @returns {Promise<Object>}
+   */
+  async placeLiveBet(asset, direction, amount, timeframe = '1min') {
+    if (!this.walletAddress) throw new Error('Wallet not connected');
+    return await this._post('/live/bet', {
+      address: this.walletAddress,
+      asset: asset.toUpperCase(),
+      direction: direction.toLowerCase(),
+      amount,
+      timeframe,
+      timestamp: getTimestamp(),
+    });
+  }
+
+  /**
+   * Get active live bets
+   * @param {string} [address] - Address (defaults to connected wallet)
+   * @returns {Promise<Array>}
+   */
+  async getActiveLiveBets(address = null) {
+    const addr = address || this.walletAddress;
+    if (!addr) throw new Error('No address specified');
+    const result = await this._fetch(`/live/active/${addr}`);
+    return result.bets || result || [];
+  }
+
+  /**
+   * Get live bet history
+   * @param {string} [address] - Address (defaults to connected wallet)
+   * @param {number} [limit=50] - Max results
+   * @returns {Promise<Array>}
+   */
+  async getLiveBetHistory(address = null, limit = 50) {
+    const addr = address || this.walletAddress;
+    if (!addr) throw new Error('No address specified');
+    const result = await this._fetch(`/live/history/${addr}?limit=${limit}`);
+    return result.bets || result || [];
+  }
+
+  /**
+   * Check live bet status
+   * @param {string} betId - Live bet ID
+   * @returns {Promise<Object>}
+   */
+  async getLiveBetStatus(betId) {
+    return await this._fetch(`/live/status/${betId}`);
+  }
+
+  // ==========================================================================
+  // PRICES (For live betting reference)
+  // ==========================================================================
+
+  /**
+   * Get Bitcoin price
+   * @returns {Promise<Object>}
+   */
+  async getBitcoinPrice() {
+    return await this._fetch('/prices/bitcoin');
+  }
+
+  /**
+   * Get Solana price
+   * @returns {Promise<Object>}
+   */
+  async getSolanaPrice() {
+    return await this._fetch('/prices/solana');
+  }
+
+  /**
+   * Get all prices
+   * @returns {Promise<Object>}
+   */
+  async getPrices() {
+    return await this._fetch('/prices');
   }
 
   // ==========================================================================
@@ -1483,6 +2118,37 @@ export class L2Client {
    */
   async getNonce(address) {
     return await this._fetch(`/rpc/nonce/${address}`);
+  }
+
+  /**
+   * Get all accounts (admin)
+   * @returns {Promise<Array>}
+   */
+  async getAccounts() {
+    const result = await this._fetch('/accounts');
+    return result.accounts || result || [];
+  }
+
+  /**
+   * Get transactions for address
+   * @param {string} [address] - Address (defaults to connected wallet)
+   * @returns {Promise<Array>}
+   */
+  async getTransactions(address = null) {
+    const addr = address || this.walletAddress;
+    if (!addr) throw new Error('No address specified');
+    const result = await this._fetch(`/transactions/${addr}`);
+    return result.transactions || result || [];
+  }
+
+  /**
+   * Get recent transactions network-wide
+   * @param {number} [limit=50] - Max results
+   * @returns {Promise<Array>}
+   */
+  async getRecentTransactions(limit = 50) {
+    const result = await this._fetch(`/transactions/recent?limit=${limit}`);
+    return result.transactions || result || [];
   }
 
   // ==========================================================================
@@ -1523,6 +2189,293 @@ export class L2Client {
    */
   async getLedgerActivity() {
     return await this._fetch('/ledger');
+  }
+
+  // ==========================================================================
+  // LEDGER & STATS
+  // ==========================================================================
+
+  /**
+   * Get ledger statistics
+   * @returns {Promise<Object>}
+   */
+  async getLedgerStats() {
+    return await this._fetch('/ledger/stats');
+  }
+
+  /**
+   * Get blockchain activity feed
+   * @param {number} [limit=50] - Max results
+   * @returns {Promise<Array>}
+   */
+  async getBlockchainActivity(limit = 50) {
+    const result = await this._fetch(`/activity?limit=${limit}`);
+    return result.activity || result || [];
+  }
+
+  // ==========================================================================
+  // SOCIAL MINING - Cross-Layer Social Actions
+  // ==========================================================================
+
+  /**
+   * Create a social post (mined to L1)
+   * @param {string} content - Post content
+   * @param {string} [mediaType='text'] - Media type (text, image, video)
+   * @returns {Promise<Object>}
+   */
+  async createSocialPost(content, mediaType = 'text') {
+    if (!this.walletAddress) throw new Error('Wallet not connected');
+    return await this._post('/social/post', {
+      address: this.walletAddress,
+      content,
+      media_type: mediaType,
+      timestamp: getTimestamp(),
+    });
+  }
+
+  /**
+   * Like a social post
+   * @param {string} postId - Post ID
+   * @returns {Promise<Object>}
+   */
+  async likeSocialPost(postId) {
+    if (!this.walletAddress) throw new Error('Wallet not connected');
+    return await this._post('/social/like', {
+      address: this.walletAddress,
+      post_id: postId,
+      timestamp: getTimestamp(),
+    });
+  }
+
+  /**
+   * Get social stats for an address
+   * @param {string} [address] - Address (defaults to connected wallet)
+   * @returns {Promise<Object>}
+   */
+  async getSocialStats(address = null) {
+    const addr = address || this.walletAddress;
+    if (!addr) throw new Error('No address specified');
+    return await this._fetch(`/social/stats/${addr}`);
+  }
+
+  /**
+   * Get social feed
+   * @param {number} [limit=20] - Max posts
+   * @returns {Promise<Array>}
+   */
+  async getSocialFeed(limit = 20) {
+    const result = await this._fetch(`/social/feed?limit=${limit}`);
+    return result.posts || result || [];
+  }
+
+  // ==========================================================================
+  // L1 CROSS-LAYER METHODS (For L2 to communicate with L1)
+  // ==========================================================================
+
+  /**
+   * Get L1 wallet address for a user ID (Supabase user ID)
+   * @param {string} userId - Supabase user ID
+   * @returns {Promise<Object>}
+   */
+  async getL1WalletByUserId(userId) {
+    return await this._fetch(`/bridge/wallet/${userId}`);
+  }
+
+  /**
+   * Verify L1 signature via L1 RPC
+   * @param {string} publicKey - 64-char hex public key
+   * @param {string} message - Original message
+   * @param {string} signature - 128-char hex signature
+   * @returns {Promise<Object>}
+   */
+  async verifyL1Signature(publicKey, message, signature) {
+    const response = await fetch(`${this.l1Url}/rpc`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        jsonrpc: '2.0',
+        id: Date.now(),
+        method: 'verifyL1Signature',
+        params: [publicKey, message, signature],
+      }),
+    });
+    const result = await response.json();
+    return result.result || result;
+  }
+
+  /**
+   * Get L1 balance for address
+   * @param {string} address - L1 address
+   * @returns {Promise<Object>}
+   */
+  async getL1Balance(address) {
+    const response = await fetch(`${this.l1Url}/balance/${address}`);
+    return await response.json();
+  }
+
+  /**
+   * Get L1 nonce for address
+   * @param {string} address - L1 address
+   * @returns {Promise<Object>}
+   */
+  async getL1Nonce(address) {
+    return await this._fetch(`/bridge/nonce/${address}`);
+  }
+
+  /**
+   * Record settlement to L1 (for L2 market resolutions)
+   * @param {Object} settlement - Settlement data
+   * @returns {Promise<Object>}
+   */
+  async recordL1Settlement(settlement) {
+    const response = await fetch(`${this.l1Url}/bridge/settlement`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(settlement),
+    });
+    return await response.json();
+  }
+
+  /**
+   * Get L1 health status
+   * @returns {Promise<Object>}
+   */
+  async getL1Health() {
+    const response = await fetch(`${this.l1Url}/health`);
+    return await response.json();
+  }
+
+  /**
+   * Get L1 PoH status (for time sync)
+   * @returns {Promise<Object>}
+   */
+  async getL1PoHStatus() {
+    const response = await fetch(`${this.l1Url}/poh/status`);
+    return await response.json();
+  }
+
+  // ==========================================================================
+  // EVENTS/MARKETS MANAGEMENT
+  // ==========================================================================
+
+  /**
+   * Get pending events awaiting liquidity
+   * @returns {Promise<Array>}
+   */
+  async getPendingEvents() {
+    const result = await this._fetch('/events/pending');
+    return result.events || result || [];
+  }
+
+  /**
+   * Launch an event (add initial liquidity and make live)
+   * @param {string} eventId - Event ID
+   * @returns {Promise<Object>}
+   */
+  async launchEvent(eventId) {
+    return await this._post('/events/launch', { event_id: eventId });
+  }
+
+  /**
+   * Create AI-generated event
+   * @param {Object} event - Event parameters
+   * @returns {Promise<Object>}
+   */
+  async createAIEvent(event) {
+    return await this._post('/events/ai/create', event);
+  }
+
+  // ==========================================================================
+  // BRIDGE STATUS (from L1)
+  // ==========================================================================
+
+  /**
+   * Get bridge status from L1
+   * @param {string} bridgeId - Bridge ID
+   * @returns {Promise<Object>}
+   */
+  async getL1BridgeStatus(bridgeId) {
+    const response = await fetch(`${this.l1Url}/bridge/status/${bridgeId}`);
+    return await response.json();
+  }
+
+  /**
+   * Get settlement roots from L1
+   * @returns {Promise<Array>}
+   */
+  async getSettlementRoots() {
+    const response = await fetch(`${this.l1Url}/bridge/settlement/roots`);
+    const result = await response.json();
+    return result.roots || result || [];
+  }
+
+  /**
+   * Claim settlement payout via Merkle proof
+   * @param {string} rootId - Settlement root ID
+   * @param {number} amount - Amount to claim
+   * @param {Array<string>} merkleProof - Merkle proof path
+   * @param {number} leafIndex - Position in tree
+   * @returns {Promise<Object>}
+   */
+  async claimSettlement(rootId, amount, merkleProof = [], leafIndex = 0) {
+    if (!this.walletAddress) throw new Error('Wallet not connected');
+    const response = await fetch(`${this.l1Url}/bridge/settlement/claim`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        root_id: rootId,
+        user_address: this.walletAddress,
+        amount,
+        merkle_proof: merkleProof,
+        leaf_index: leafIndex,
+      }),
+    });
+    return await response.json();
+  }
+
+  /**
+   * Get pending bridges for address
+   * @param {string} [address] - Address (defaults to connected wallet)
+   * @returns {Promise<Array>}
+   */
+  async getPendingBridges(address = null) {
+    const addr = address || this.walletAddress;
+    if (!addr) throw new Error('No address specified');
+    const result = await this._fetch(`/bridge/pending/${addr}`);
+    return result.pending || result || [];
+  }
+
+  /**
+   * Get bridge statistics
+   * @returns {Promise<Object>}
+   */
+  async getL1BridgeStats() {
+    const response = await fetch(`${this.l1Url}/bridge/stats`);
+    return await response.json();
+  }
+
+  // ==========================================================================
+  // ADMIN FUNCTIONS
+  // ==========================================================================
+
+  /**
+   * Admin: Mint tokens to address (development only)
+   * @param {string} address - Target address
+   * @param {number} amount - Amount to mint
+   * @returns {Promise<Object>}
+   */
+  async adminMint(address, amount) {
+    return await this._post('/admin/mint', { address, amount });
+  }
+
+  /**
+   * Admin: Set balance for address (development only)
+   * @param {string} address - Target address
+   * @param {number} balance - New balance
+   * @returns {Promise<Object>}
+   */
+  async adminSetBalance(address, balance) {
+    return await this._post('/admin/set_balance', { address, balance });
   }
 
   // ==========================================================================
@@ -1604,6 +2557,9 @@ export function createBridgeClient(l1Url = null, l2Url = null) {
 
 // Named exports
 export { DEFAULT_CONFIG, generateNonce, getTimestamp };
+
+// Backwards compatibility alias
+export { L1Client as Layer1Client };
 
 // Default export
 export default L1Client;

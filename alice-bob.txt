@@ -1,0 +1,135 @@
+================================================================================
+                    ALICE & BOB TEST ACCOUNTS
+                    Layer1 BlackBook Blockchain
+================================================================================
+
+These are deterministic test accounts for development/testing.
+⚠️ NEVER use these in production - the private keys are public!
+
+================================================================================
+                              ALICE
+================================================================================
+
+Name:           Alice
+Username:       alice_test
+Email:          alice@blackbook.test
+
+WALLET ADDRESS (L1 & L2 Unified):
+  L1ALICE000000001
+
+PUBLIC KEY (Ed25519, 64 hex chars):
+  4013e5a935e9873a57879c471d5da838a0c9c762eea3937eb3cd34d35c97dd57
+
+PRIVATE KEY (Ed25519, 64 hex chars):
+  616c6963655f746573745f6163636f756e745f76310000000000000000000001
+
+BALANCES (Initial):
+  Total Balance:   10,000 BB  (what Alice sees in UI)
+  L1 Available:    10,000 BB  (can transfer or bridge)
+  L1 Locked:            0 BB  (bridged to L2)
+  L2 Balance:           0 BB  (for betting on L2)
+
+================================================================================
+                               BOB
+================================================================================
+
+Name:           Bob
+Username:       bob_test
+Email:          bob@blackbook.test
+
+WALLET ADDRESS (L1 & L2 Unified):
+  L1BOB00000000001
+
+PUBLIC KEY (Ed25519, 64 hex chars):
+  b9e9c6a69bf6051839c86115d89788bd9559ab4e266f43e18781ded28ce5573f
+
+PRIVATE KEY (Ed25519, 64 hex chars):
+  626f625f746573745f6163636f756e745f763100000000000000000000000002
+
+BALANCES (Initial):
+  Total Balance:    5,000 BB  (what Bob sees in UI)
+  L1 Available:     5,000 BB  (can transfer or bridge)
+  L1 Locked:            0 BB  (bridged to L2)
+  L2 Balance:           0 BB  (for betting on L2)
+
+================================================================================
+                              RPC ENDPOINTS
+================================================================================
+
+L1 Blockchain:       http://localhost:8080
+L2 Prediction Market: http://localhost:1234
+
+================================================================================
+                            CAPABILITIES
+================================================================================
+
+Both Alice and Bob can:
+  ✅ Sign transactions
+  ✅ L1 transfers
+  ✅ Bridge L1 → L2 (lock funds)
+  ✅ Bet on L2 (instant)
+  ✅ Withdraw L2 → L1 (unlock + profit)
+  ✅ Social mining
+
+================================================================================
+                         UNIFIED WALLET MODEL
+================================================================================
+
+Users see ONE total balance. Funds must be bridged to L2 for betting.
+
+Flow:
+  1. User starts with all funds in L1 (available)
+  2. bridgeToL2(amount) → locks on L1, credits L2
+  3. User bets on L2 (instant, off-chain)
+  4. withdrawToL1() → settles L2 balance back to L1
+
+Balance Formula:
+  total_balance = l1_available + l1_locked
+
+Where:
+  - total_balance: What the user sees in their wallet UI
+  - l1_available:  Funds available for L1 transfers or bridging to L2
+  - l1_locked:     Funds locked because they're bridged to L2
+  - l2_balance:    Active gaming balance on L2 (equals l1_locked when bridged)
+
+================================================================================
+                         EXAMPLE USAGE
+================================================================================
+
+Transfer (Alice sends 100 BB to Bob on L1):
+  POST http://localhost:8080/transfer
+  Sign with Alice's private key
+
+Bridge (Bob bridges 50 BB from L1 to L2):
+  POST http://localhost:8080/bridge/initiate
+  Sign with Bob's private key
+
+Social Mining (Alice creates a post):
+  POST http://localhost:8080/social/post
+  Sign with Alice's private key
+
+MPC (Alice sets up 2-of-2 threshold signing):
+  POST http://localhost:8080/mpc/setup
+  Sign with Alice's private key
+
+================================================================================
+                         SIGNING REQUESTS
+================================================================================
+
+To sign a request as Alice or Bob:
+
+1. Create message: "{payload}\n{timestamp}\n{nonce}"
+2. Sign with Ed25519 using private key
+3. Send SignedRequest:
+
+{
+  "public_key": "4013e5a935e9873a57879c471d5da838a0c9c762eea3937eb3cd34d35c97dd57",
+  "wallet_address": "L1ALICE000000001",
+  "payload": "{\"to\":\"L1BOB00000000001\",\"amount\":100}",
+  "timestamp": 1702500000,
+  "nonce": "random_string",
+  "signature": "<128 hex chars - Ed25519 signature>"
+}
+
+================================================================================
+
