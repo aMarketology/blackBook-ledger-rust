@@ -24,8 +24,8 @@ Removed JWT authentication from BlackBook Layer 2. Authentication now relies **e
 2. Frontend sends JWT in Authorization header
 3. L2 verifies JWT with Supabase
 4. L2 maps JWT to wallet address
-5. User signs transaction with private key
-6. L2 verifies signature
+5. User signs transaction with private key (using salt and encyptet blob)
+6. L1 verifies signature
 7. Bet is placed
 ```
 

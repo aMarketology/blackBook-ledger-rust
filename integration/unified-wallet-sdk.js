@@ -3,6 +3,7 @@
 // ============================================================================
 //
 // Single wallet experience for L1 (vault) and L2 (gaming/betting)
+// Full control of both layers with Ed25519 cryptographic signing
 //
 // THE FLOW:
 // ┌──────────────┐      "Bridge"      ┌──────────────┐      "Bet"       
@@ -12,6 +13,23 @@
 //        ▲                                                    │
 //        └────────────────────────────────────────────────────┘
 //                            "Withdraw" (profit returned!)
+//
+// FEATURES:
+//   L1 BLOCKCHAIN:
+//   - Balance & transfer with Ed25519 signatures
+//   - Solana-compatible RPC (getRecentBlockhash, getSlot, etc.)
+//   - Block operations (getBlock, getLatestBlock, getBlocks)
+//   - Signature verification (verifySignature)
+//   - Social mining (createSocialPost, getSocialStats)
+//   - Bridge escrow (bridgeInitiate, bridgeRelease)
+//
+//   L2 PREDICTION MARKET:
+//   - Signed betting (placeBet with Ed25519)
+//   - Shares system (mintShares, redeemShares)
+//   - Orderbook/CLOB (placeLimitOrder, getOrderbook)
+//   - Market resolution (resolveMarket, claimWinnings)
+//   - Oracle management (listOracles, addOracle)
+//   - Session management (startSession, settleSession)
 //
 // USAGE:
 //   import { UnifiedWallet } from './unified-wallet-sdk.js';
@@ -31,8 +49,11 @@
 //   // Bridge to L2 for betting
 //   await alice.bridgeToL2(5000);
 //   
-//   // Place bet on L2
+//   // Place bet on L2 (Ed25519 signed)
 //   await alice.placeBet('btc_100k_2025', 'yes', 1000);
+//   
+//   // Check blockhash (Solana-compatible)
+//   const { blockhash } = await alice.getRecentBlockhash();
 //   
 //   // Withdraw winnings back to L1
 //   await alice.withdraw();
@@ -1310,36 +1331,566 @@ export class UnifiedWallet {
 
   /**
    * Get all available markets
+   * @returns {Promise<Array>} - Array of market objects
    */
   async getMarkets() {
     try {
       const response = await fetch(`${CONFIG.L2_URL}/markets`);
       const data = await response.json();
-      return data.markets || [];
+      return data.markets || data || [];
     } catch {
       return [];
     }
   }
 
   /**
-   * Place a bet on L2
-   * @deprecated Betting is handled by layer2_integration_sdk.js
-   * This method is kept for backwards compatibility
+   * Get a specific market by ID
+   * @param {string} marketId - Market identifier
+   * @returns {Promise<Object|null>} - Market data or null
    */
-  async placeBet(marketId, option, amount) {
-    // Betting is handled by PredictionMarket SDK (layer2_integration_sdk.js)
-    // Return success to allow the working SDK to handle the actual bet
-    console.log(`[UnifiedWallet] placeBet delegated to PredictionMarket SDK`);
-    return { success: true, delegated: true };
+  async getMarket(marketId) {
+    try {
+      const response = await fetch(`${CONFIG.L2_URL}/market/${marketId}`);
+      if (!response.ok) return null;
+      return await response.json();
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * Get the nonce for a wallet (for replay protection)
+   * @param {string} [address] - Address to query (default: this wallet)
+   * @returns {Promise<number>} - Current nonce
+   */
+  async getNonce(address = null) {
+    try {
+      const addr = address || this.address;
+      const response = await fetch(`${CONFIG.L2_URL}/nonce/${addr}`);
+      const data = await response.json();
+      return data.nonce || 0;
+    } catch {
+      return 0;
+    }
+  }
+
+  /**
+   * Place a signed bet on L2 (Ed25519 authenticated)
+   * @param {string} marketId - Market to bet on
+   * @param {string} outcome - 'yes' or 'no' (or market-specific option)
+   * @param {number} amount - Amount to bet in BB
+   * @returns {Promise<Object>} - Bet result with bet_id
+   */
+  async placeBet(marketId, outcome, amount) {
+    if (!this._privateKey) {
+      throw new Error('Wallet must be unlocked to place bets');
+    }
+
+    if (amount > this._l2Balance) {
+      throw new Error(`Insufficient L2 balance. Have: ${this._l2Balance} BB, Need: ${amount} BB`);
+    }
+
+    const signedRequest = this.createSignedRequest({
+      market_id: marketId,
+      outcome: outcome,
+      amount: amount
+    });
+
+    const response = await fetch(`${CONFIG.L2_URL}/bet`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(signedRequest)
+    });
+
+    const result = await response.json();
+    
+    if (result.success || result.bet_id) {
+      await this.refresh();
+      console.log(`✅ Bet placed: ${amount} BB on ${outcome} for ${marketId}`);
+    }
+    
+    return result;
+  }
+
+  /**
+   * Get a specific bet by ID
+   * @param {string} betId - Bet identifier
+   * @returns {Promise<Object|null>} - Bet data
+   */
+  async getBetById(betId) {
+    try {
+      const response = await fetch(`${CONFIG.L2_URL}/bet/${betId}`);
+      if (!response.ok) return null;
+      return await response.json();
+    } catch {
+      return null;
+    }
   }
 
   /**
    * Get user's bet history
+   * @param {string} [address] - Address to query (default: this wallet)
+   * @returns {Promise<Array>} - Array of bets
    */
-  async getBets() {
+  async getBets(address = null) {
     try {
-      const response = await fetch(`${CONFIG.L2_URL}/bets/${this.address}`);
+      const addr = address || this.address;
+      const response = await fetch(`${CONFIG.L2_URL}/bets/${addr}`);
+      const data = await response.json();
+      return data.bets || data || [];
+    } catch {
+      return [];
+    }
+  }
+
+  /**
+   * Get all bets for a specific market
+   * @param {string} marketId - Market identifier
+   * @returns {Promise<Array>} - Array of bets on the market
+   */
+  async getMarketBets(marketId) {
+    try {
+      const response = await fetch(`${CONFIG.L2_URL}/market/${marketId}/bets`);
+      const data = await response.json();
+      return data.bets || data || [];
+    } catch {
+      return [];
+    }
+  }
+
+  // ==========================================================================
+  // L2 SHARES SYSTEM (Outcome Token Trading)
+  // ==========================================================================
+
+  /**
+   * Mint outcome shares (convert BB to YES/NO shares)
+   * @param {string} marketId - Market identifier
+   * @param {number} amount - Amount of BB to convert to shares
+   * @returns {Promise<Object>} - Minting result with shares received
+   */
+  async mintShares(marketId, amount) {
+    if (!this._privateKey) {
+      throw new Error('Wallet must be unlocked to mint shares');
+    }
+
+    const signedRequest = this.createSignedRequest({
+      market_id: marketId,
+      amount: amount
+    });
+
+    const response = await fetch(`${CONFIG.L2_URL}/shares/mint`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(signedRequest)
+    });
+
+    const result = await response.json();
+    if (result.success) {
+      await this.refresh();
+    }
+    return result;
+  }
+
+  /**
+   * Redeem shares (convert YES/NO shares back to BB after resolution)
+   * @param {string} marketId - Market identifier
+   * @param {number} shares - Number of shares to redeem
+   * @returns {Promise<Object>} - Redemption result with BB received
+   */
+  async redeemShares(marketId, shares) {
+    if (!this._privateKey) {
+      throw new Error('Wallet must be unlocked to redeem shares');
+    }
+
+    const signedRequest = this.createSignedRequest({
+      market_id: marketId,
+      shares: shares
+    });
+
+    const response = await fetch(`${CONFIG.L2_URL}/shares/redeem`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(signedRequest)
+    });
+
+    const result = await response.json();
+    if (result.success) {
+      await this.refresh();
+    }
+    return result;
+  }
+
+  /**
+   * Get share position for a specific market
+   * @param {string} marketId - Market identifier
+   * @param {string} [address] - Address to query (default: this wallet)
+   * @returns {Promise<Object>} - Position with yes_shares, no_shares
+   */
+  async getSharePosition(marketId, address = null) {
+    try {
+      const addr = address || this.address;
+      const response = await fetch(`${CONFIG.L2_URL}/shares/position/${marketId}/${addr}`);
       return await response.json();
+    } catch {
+      return { yes_shares: 0, no_shares: 0 };
+    }
+  }
+
+  /**
+   * Get all share positions for a wallet
+   * @param {string} [address] - Address to query (default: this wallet)
+   * @returns {Promise<Array>} - Array of positions across all markets
+   */
+  async getAllSharePositions(address = null) {
+    try {
+      const addr = address || this.address;
+      const response = await fetch(`${CONFIG.L2_URL}/shares/positions/${addr}`);
+      const data = await response.json();
+      return data.positions || data || [];
+    } catch {
+      return [];
+    }
+  }
+
+  // ==========================================================================
+  // L2 ORDERBOOK / CLOB (Central Limit Order Book)
+  // ==========================================================================
+
+  /**
+   * Place a limit order on the orderbook
+   * @param {string} marketId - Market identifier
+   * @param {string} side - 'buy' or 'sell'
+   * @param {string} outcome - 'yes' or 'no'
+   * @param {number} price - Price per share (0.01 to 0.99)
+   * @param {number} amount - Number of shares
+   * @returns {Promise<Object>} - Order result with order_id
+   */
+  async placeLimitOrder(marketId, side, outcome, price, amount) {
+    if (!this._privateKey) {
+      throw new Error('Wallet must be unlocked to place orders');
+    }
+
+    const signedRequest = this.createSignedRequest({
+      market_id: marketId,
+      side: side,
+      outcome: outcome,
+      price: price,
+      amount: amount
+    });
+
+    const response = await fetch(`${CONFIG.L2_URL}/orderbook/place`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(signedRequest)
+    });
+
+    const result = await response.json();
+    if (result.success) {
+      await this.refresh();
+    }
+    return result;
+  }
+
+  /**
+   * Cancel an open order
+   * @param {string} orderId - Order identifier
+   * @returns {Promise<Object>} - Cancellation result
+   */
+  async cancelOrder(orderId) {
+    if (!this._privateKey) {
+      throw new Error('Wallet must be unlocked to cancel orders');
+    }
+
+    const signedRequest = this.createSignedRequest({
+      order_id: orderId
+    });
+
+    const response = await fetch(`${CONFIG.L2_URL}/orderbook/cancel`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(signedRequest)
+    });
+
+    return await response.json();
+  }
+
+  /**
+   * Get the orderbook for a market
+   * @param {string} marketId - Market identifier
+   * @returns {Promise<Object>} - Orderbook with bids and asks
+   */
+  async getOrderbook(marketId) {
+    try {
+      const response = await fetch(`${CONFIG.L2_URL}/orderbook/${marketId}`);
+      return await response.json();
+    } catch {
+      return { bids: [], asks: [] };
+    }
+  }
+
+  /**
+   * Get user's open orders
+   * @param {string} [address] - Address to query (default: this wallet)
+   * @returns {Promise<Array>} - Array of open orders
+   */
+  async getOpenOrders(address = null) {
+    try {
+      const addr = address || this.address;
+      const response = await fetch(`${CONFIG.L2_URL}/orderbook/orders/${addr}`);
+      const data = await response.json();
+      return data.orders || data || [];
+    } catch {
+      return [];
+    }
+  }
+
+  /**
+   * Get current market odds (from orderbook mid-price)
+   * @param {string} marketId - Market identifier
+   * @returns {Promise<Object>} - Market odds with yes_price, no_price
+   */
+  async getMarketOdds(marketId) {
+    try {
+      const response = await fetch(`${CONFIG.L2_URL}/market/${marketId}/odds`);
+      return await response.json();
+    } catch {
+      return { yes_price: 0.5, no_price: 0.5 };
+    }
+  }
+
+  // ==========================================================================
+  // MARKET RESOLUTION
+  // ==========================================================================
+
+  /**
+   * Resolve a market (Oracle/Admin only)
+   * @param {string} marketId - Market identifier
+   * @param {string} winningOutcome - 'yes' or 'no'
+   * @param {string} [reason] - Resolution reason/evidence
+   * @returns {Promise<Object>} - Resolution result
+   */
+  async resolveMarket(marketId, winningOutcome, reason = '') {
+    if (!this._privateKey) {
+      throw new Error('Wallet must be unlocked to resolve markets');
+    }
+
+    const signedRequest = this.createSignedRequest({
+      market_id: marketId,
+      winning_outcome: winningOutcome,
+      reason: reason
+    });
+
+    const response = await fetch(`${CONFIG.L2_URL}/market/resolve`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(signedRequest)
+    });
+
+    return await response.json();
+  }
+
+  /**
+   * Get market resolution details
+   * @param {string} marketId - Market identifier
+   * @returns {Promise<Object|null>} - Resolution details or null if not resolved
+   */
+  async getMarketResolution(marketId) {
+    try {
+      const response = await fetch(`${CONFIG.L2_URL}/market/${marketId}/resolution`);
+      if (!response.ok) return null;
+      return await response.json();
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * Claim winnings from a resolved market
+   * @param {string} marketId - Market identifier
+   * @returns {Promise<Object>} - Claim result with amount won
+   */
+  async claimWinnings(marketId) {
+    if (!this._privateKey) {
+      throw new Error('Wallet must be unlocked to claim winnings');
+    }
+
+    const signedRequest = this.createSignedRequest({
+      market_id: marketId
+    });
+
+    const response = await fetch(`${CONFIG.L2_URL}/market/claim`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(signedRequest)
+    });
+
+    const result = await response.json();
+    if (result.success) {
+      await this.refresh();
+      console.log(`✅ Claimed ${result.amount || 0} BB from market ${marketId}`);
+    }
+    return result;
+  }
+
+  /**
+   * Get markets pending resolution
+   * @returns {Promise<Array>} - Array of markets awaiting resolution
+   */
+  async getPendingResolutions() {
+    try {
+      const response = await fetch(`${CONFIG.L2_URL}/markets/pending`);
+      const data = await response.json();
+      return data.markets || data || [];
+    } catch {
+      return [];
+    }
+  }
+
+  // ==========================================================================
+  // ORACLE MANAGEMENT
+  // ==========================================================================
+
+  /**
+   * List authorized oracles
+   * @returns {Promise<Array>} - Array of oracle addresses/keys
+   */
+  async listOracles() {
+    try {
+      const response = await fetch(`${CONFIG.L2_URL}/oracles`);
+      const data = await response.json();
+      return data.oracles || data || [];
+    } catch {
+      return [];
+    }
+  }
+
+  /**
+   * Add an authorized oracle (Admin only)
+   * @param {string} oracleAddress - Address to authorize as oracle
+   * @returns {Promise<Object>} - Result
+   */
+  async addOracle(oracleAddress) {
+    if (!this._privateKey) {
+      throw new Error('Wallet must be unlocked to add oracles');
+    }
+
+    const signedRequest = this.createSignedRequest({
+      oracle_address: oracleAddress
+    });
+
+    const response = await fetch(`${CONFIG.L2_URL}/oracle/add`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(signedRequest)
+    });
+
+    return await response.json();
+  }
+
+  /**
+   * Remove an authorized oracle (Admin only)
+   * @param {string} oracleAddress - Oracle address to remove
+   * @returns {Promise<Object>} - Result
+   */
+  async removeOracle(oracleAddress) {
+    if (!this._privateKey) {
+      throw new Error('Wallet must be unlocked to remove oracles');
+    }
+
+    const signedRequest = this.createSignedRequest({
+      oracle_address: oracleAddress
+    });
+
+    const response = await fetch(`${CONFIG.L2_URL}/oracle/remove`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(signedRequest)
+    });
+
+    return await response.json();
+  }
+
+  // ==========================================================================
+  // L1 SETTLEMENT
+  // ==========================================================================
+
+  /**
+   * Submit market settlements to L1
+   * @param {Array} settlements - Array of settlement objects
+   * @returns {Promise<Object>} - Settlement result
+   */
+  async submitSettlements(settlements) {
+    if (!this._privateKey) {
+      throw new Error('Wallet must be unlocked to submit settlements');
+    }
+
+    const signedRequest = this.createSignedRequest({
+      settlements: settlements
+    });
+
+    const response = await fetch(`${CONFIG.L2_URL}/settlement/submit`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(signedRequest)
+    });
+
+    return await response.json();
+  }
+
+  /**
+   * Get markets pending L1 settlement
+   * @returns {Promise<Array>} - Markets ready for L1 settlement
+   */
+  async getPendingSettlements() {
+    try {
+      const response = await fetch(`${CONFIG.L2_URL}/settlement/pending`);
+      const data = await response.json();
+      return data.markets || data || [];
+    } catch {
+      return [];
+    }
+  }
+
+  // ==========================================================================
+  // L2 LEDGER & ACTIVITY
+  // ==========================================================================
+
+  /**
+   * Get L2 ledger state (JSON)
+   * @returns {Promise<Object>} - Full ledger state
+   */
+  async getLedger() {
+    try {
+      const response = await fetch(`${CONFIG.L2_URL}/ledger`);
+      return await response.json();
+    } catch {
+      return {};
+    }
+  }
+
+  /**
+   * Get L2 ledger statistics
+   * @returns {Promise<Object>} - Ledger stats
+   */
+  async getLedgerStats() {
+    try {
+      const response = await fetch(`${CONFIG.L2_URL}/ledger/stats`);
+      return await response.json();
+    } catch {
+      return {};
+    }
+  }
+
+  /**
+   * Get activity feed (recent bets, trades, resolutions)
+   * @param {number} [limit=50] - Maximum entries
+   * @returns {Promise<Array>} - Activity feed
+   */
+  async getActivityFeed(limit = 50) {
+    try {
+      const response = await fetch(`${CONFIG.L2_URL}/activity?limit=${limit}`);
+      const data = await response.json();
+      return data.activity || data || [];
     } catch {
       return [];
     }
@@ -1407,6 +1958,102 @@ export class UnifiedWallet {
     } catch {
       return { total_bridged: 0, total_withdrawn: 0, active_sessions: 0 };
     }
+  }
+
+  /**
+   * Get pending bridge transactions
+   * @returns {Promise<Object>} - Pending bridge operations
+   */
+  async getBridgePending() {
+    try {
+      const response = await fetch(`${CONFIG.L1_URL}/bridge/pending`);
+      return await response.json();
+    } catch {
+      return { pending_count: 0, pending: [] };
+    }
+  }
+
+  /**
+   * Get bridge history for this wallet
+   * @param {string} [address] - Address to query (default: this wallet)
+   * @returns {Promise<Array>} - Array of bridge transactions
+   */
+  async getBridgeHistory(address = null) {
+    try {
+      const addr = address || this.address;
+      const response = await fetch(`${CONFIG.L1_URL}/bridge/history/${addr}`);
+      const data = await response.json();
+      return data.history || data || [];
+    } catch {
+      return [];
+    }
+  }
+
+  /**
+   * Initiate a bridge lock (L1 → L2 escrow)
+   * Used for P2P escrow or cross-layer transfers with settlement
+   * @param {string} targetAddress - Beneficiary address
+   * @param {number} amount - Amount to lock
+   * @param {string} [targetLayer='L2'] - Target layer
+   * @returns {Promise<Object>} - Lock result with lock_id, bridge_id
+   */
+  async bridgeInitiate(targetAddress, amount, targetLayer = 'L2') {
+    if (!this._privateKey) {
+      throw new Error('Wallet must be unlocked to initiate bridge');
+    }
+
+    const signedRequest = this.createSignedRequest({
+      target_address: targetAddress,
+      amount: amount,
+      target_layer: targetLayer
+    });
+
+    const response = await fetch(`${CONFIG.L1_URL}/bridge/initiate`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(signedRequest)
+    });
+
+    const result = await response.json();
+    if (result.success) {
+      await this.refresh();
+      console.log(`🔒 Bridge initiated: ${amount} BB locked (ID: ${result.lock_id || result.bridge_id})`);
+    }
+    return result;
+  }
+
+  /**
+   * Verify a settlement (L2 → L1 bridge release authorization)
+   * @param {Object} settlementProof - Settlement proof from L2
+   * @returns {Promise<Object>} - Verification result
+   */
+  async bridgeVerifySettlement(settlementProof) {
+    const response = await fetch(`${CONFIG.L1_URL}/bridge/verify-settlement`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(settlementProof)
+    });
+    return await response.json();
+  }
+
+  /**
+   * Release escrowed funds (after settlement verification)
+   * @param {string} lockId - Lock ID to release
+   * @returns {Promise<Object>} - Release result
+   */
+  async bridgeRelease(lockId) {
+    const response = await fetch(`${CONFIG.L1_URL}/bridge/release`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ lock_id: lockId })
+    });
+
+    const result = await response.json();
+    if (result.success) {
+      await this.refresh();
+      console.log(`🔓 Bridge released: ${result.amount || 0} BB to ${result.recipient || 'beneficiary'}`);
+    }
+    return result;
   }
 
   /**
@@ -1628,6 +2275,251 @@ export class UnifiedWallet {
     }
     
     return result.result;
+  }
+
+  // ==========================================================================
+  // L1 RPC WRAPPER METHODS (Solana-Compatible)
+  // ==========================================================================
+
+  /**
+   * Get recent blockhash (Solana-compatible)
+   * @returns {Promise<{blockhash: string, lastValidBlockHeight: number}>}
+   */
+  async getRecentBlockhash() {
+    return await this.rpc('getRecentBlockhash');
+  }
+
+  /**
+   * Get latest blockhash (Solana-compatible)
+   * @returns {Promise<{blockhash: string, lastValidBlockHeight: number}>}
+   */
+  async getLatestBlockhash() {
+    return await this.rpc('getLatestBlockhash');
+  }
+
+  /**
+   * Check if a blockhash is still valid
+   * @param {string} blockhash - The blockhash to validate
+   * @returns {Promise<{valid: boolean}>}
+   */
+  async isBlockhashValid(blockhash) {
+    return await this.rpc('isBlockhashValid', [blockhash]);
+  }
+
+  /**
+   * Get current block height
+   * @returns {Promise<number>}
+   */
+  async getBlockHeight() {
+    return await this.rpc('getBlockHeight');
+  }
+
+  /**
+   * Get current slot (same as block height for BlackBook)
+   * @returns {Promise<number>}
+   */
+  async getSlot() {
+    return await this.rpc('getSlot');
+  }
+
+  /**
+   * Get slot leader for a given slot
+   * @param {number} [slot] - Optional slot number (default: current)
+   * @returns {Promise<string>} - Leader public key or validator ID
+   */
+  async getSlotLeader(slot = null) {
+    return await this.rpc('getSlotLeader', slot ? [slot] : []);
+  }
+
+  /**
+   * Get fee estimate for a message/transaction
+   * @returns {Promise<{fee: number, message: string}>}
+   */
+  async getFeeForMessage() {
+    return await this.rpc('getFeeForMessage');
+  }
+
+  /**
+   * Get minimum balance for rent exemption
+   * @param {number} dataSize - Size of data in bytes
+   * @returns {Promise<number>} - Minimum balance in BB
+   */
+  async getMinimumBalanceForRentExemption(dataSize = 0) {
+    return await this.rpc('getMinimumBalanceForRentExemption', [dataSize]);
+  }
+
+  /**
+   * Get chain statistics
+   * @returns {Promise<Object>} - Chain stats including block count, tx count, etc.
+   */
+  async getChainStats() {
+    return await this.rpc('getChainStats');
+  }
+
+  /**
+   * Get account info for an address
+   * @param {string} address - L1 address to query
+   * @returns {Promise<Object>} - Account information
+   */
+  async getAccountInfo(address) {
+    return await this.rpc('getAccountInfo', [address || this.address]);
+  }
+
+  /**
+   * Verify an Ed25519 signature via L1 RPC
+   * @param {string} publicKey - 64-char hex public key
+   * @param {string} message - Original message that was signed
+   * @param {string} signature - 128-char hex signature
+   * @returns {Promise<{valid: boolean}>}
+   */
+  async verifySignature(publicKey, message, signature) {
+    return await this.rpc('verifyL1Signature', [publicKey, message, signature]);
+  }
+
+  /**
+   * Get balance via RPC (alternative to REST endpoint)
+   * @param {string} [address] - Address to query (default: this wallet)
+   * @returns {Promise<number>}
+   */
+  async getBalanceRpc(address = null) {
+    return await this.rpc('getBalance', [address || this.address]);
+  }
+
+  /**
+   * Get transactions for an address via RPC
+   * @param {string} [address] - Address to query (default: this wallet)
+   * @returns {Promise<Array>}
+   */
+  async getTransactionsRpc(address = null) {
+    return await this.rpc('getTransactions', [address || this.address]);
+  }
+
+  // ==========================================================================
+  // L1 BLOCK OPERATIONS
+  // ==========================================================================
+
+  /**
+   * Get a specific block by height
+   * @param {number} height - Block height (0 = genesis)
+   * @returns {Promise<Object>} - Block data
+   */
+  async getBlock(height) {
+    return await this.rpc('getBlock', [height]);
+  }
+
+  /**
+   * Get the latest block
+   * @returns {Promise<Object>} - Latest block data
+   */
+  async getLatestBlock() {
+    return await this.rpc('getLatestBlock');
+  }
+
+  /**
+   * Get multiple blocks starting from a height
+   * @param {number} startHeight - Starting block height
+   * @param {number} count - Number of blocks to retrieve
+   * @returns {Promise<Array>} - Array of blocks
+   */
+  async getBlocks(startHeight, count = 10) {
+    return await this.rpc('getBlocks', [startHeight, count]);
+  }
+
+  /**
+   * Get block by hash
+   * @param {string} hash - Block hash
+   * @returns {Promise<Object>} - Block data
+   */
+  async getBlockByHash(hash) {
+    return await this.rpc('getBlockByHash', [hash]);
+  }
+
+  // ==========================================================================
+  // SOCIAL MINING
+  // ==========================================================================
+
+  /**
+   * Create a social post (earns BB tokens in social mining)
+   * @param {string} content - Post content
+   * @param {string} [mediaType='text'] - Media type (text, image, video)
+   * @returns {Promise<Object>} - Post result with earned tokens
+   */
+  async createSocialPost(content, mediaType = 'text') {
+    if (!this._privateKey) {
+      throw new Error('Wallet must be unlocked to create social posts');
+    }
+
+    const signedRequest = this.createSignedRequest({
+      content,
+      media_type: mediaType
+    });
+
+    const response = await fetch(`${CONFIG.L1_URL}/social/post`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(signedRequest)
+    });
+
+    return await response.json();
+  }
+
+  /**
+   * Get social mining statistics
+   * @returns {Promise<Object>} - Social mining stats
+   */
+  async getSocialStats() {
+    const response = await fetch(`${CONFIG.L1_URL}/social/stats`);
+    return await response.json();
+  }
+
+  /**
+   * Get user's social mining history
+   * @param {string} [address] - Address to query (default: this wallet)
+   * @returns {Promise<Object>} - User's social stats and history
+   */
+  async getSocialHistory(address = null) {
+    const addr = address || this.address;
+    const response = await fetch(`${CONFIG.L1_URL}/social/history/${addr}`);
+    return await response.json();
+  }
+
+  // ==========================================================================
+  // ADMIN / DEV MODE OPERATIONS
+  // ==========================================================================
+
+  /**
+   * Mint tokens (DEV MODE ONLY)
+   * @param {string} to - Recipient address
+   * @param {number} amount - Amount to mint
+   * @returns {Promise<Object>}
+   */
+  async mint(to, amount) {
+    const response = await fetch(`${CONFIG.L1_URL}/admin/mint`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ address: to, amount })
+    });
+    const result = await response.json();
+    if (result.success) {
+      await this.refresh();
+    }
+    return result;
+  }
+
+  /**
+   * Set initial liquidity for a market (DEV MODE ONLY)
+   * @param {string} marketId - Market ID
+   * @param {number} amount - Liquidity amount
+   * @param {boolean} [houseFunded=false] - Whether house-funded
+   * @returns {Promise<Object>}
+   */
+  async setInitialLiquidity(marketId, amount, houseFunded = false) {
+    const response = await fetch(`${CONFIG.L1_URL}/markets/initial-liquidity/${marketId}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ amount, house_funded: houseFunded })
+    });
+    return await response.json();
   }
 
   // ==========================================================================
