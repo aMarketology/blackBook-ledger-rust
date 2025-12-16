@@ -13,8 +13,13 @@ use crate::app_state::SharedState;
 
 #[derive(Debug, Deserialize)]
 pub struct ConnectWalletRequest {
-    /// Wallet address (L1_ABC123...)
-    pub wallet_address: String,
+    /// Wallet address (L1_ABC123...) - supports both 'wallet_address' and 'address' fields
+    #[serde(alias = "address")]
+    pub wallet_address: Option<String>,
+    /// Public key for Ed25519 verification
+    pub public_key: Option<String>,
+    /// Connection timestamp
+    pub timestamp: Option<u64>,
     /// Optional username for display
     pub username: Option<String>,
 }
@@ -24,42 +29,62 @@ pub struct ConnectWalletRequest {
 /// POST /auth/connect
 /// Simple wallet connection - no JWT, just wallet address
 /// Creates account if new, returns balance if existing
+/// Accepts: { address, public_key, timestamp } or { wallet_address, username }
 pub async fn connect_wallet(
     State(state): State<SharedState>,
     Json(payload): Json<ConnectWalletRequest>,
 ) -> Json<Value> {
-    println!("💳 Wallet connect: {}", payload.wallet_address);
+    // Support both 'wallet_address' and 'address' fields, fallback to public_key
+    let wallet_address = payload.wallet_address
+        .clone()
+        .or_else(|| payload.public_key.clone())
+        .unwrap_or_default();
+    
+    if wallet_address.is_empty() {
+        return Json(json!({
+            "success": false,
+            "error": "No wallet address provided. Use 'address', 'wallet_address', or 'public_key' field."
+        }));
+    }
+    
+    println!("💳 Wallet connect: {}", wallet_address);
 
     let mut app_state = state.lock().unwrap();
     
     // Check if wallet exists in ledger
-    let balance_exists = app_state.ledger.balance(&payload.wallet_address) > 0.0 
-        || app_state.ledger.accounts.values().any(|addr| addr == &payload.wallet_address);
+    let balance_exists = app_state.ledger.balance(&wallet_address) > 0.0 
+        || app_state.ledger.accounts.values().any(|addr| addr == &wallet_address);
     
     if !balance_exists {
-        println!("🆕 New wallet detected: {}", payload.wallet_address);
+        println!("🆕 New wallet detected: {}", wallet_address);
         
         // Add wallet to ledger accounts (UPPERCASE for consistency with resolve_address)
         let username = payload.username.clone()
-            .unwrap_or_else(|| format!("user_{}", &payload.wallet_address[3..11]))
+            .unwrap_or_else(|| {
+                if wallet_address.len() > 11 {
+                    format!("user_{}", &wallet_address[3..11])
+                } else {
+                    format!("user_{}", &wallet_address)
+                }
+            })
             .to_uppercase();
         
         // Fund new account with initial balance (30,000 BB - matches L1 for development)
         let initial_balance = 30_000.0;
-        app_state.ledger.register(&username, &payload.wallet_address, initial_balance);
+        app_state.ledger.register(&username, &wallet_address, initial_balance);
         
-        println!("✅ Funded {} with {} BB", payload.wallet_address, initial_balance);
+        println!("✅ Funded {} with {} BB", wallet_address, initial_balance);
         
         app_state.log_activity(
             "🆕",
             "NEW_WALLET",
             &format!("New wallet {} connected | Funded with {} BB", 
-                payload.wallet_address, initial_balance)
+                wallet_address, initial_balance)
         );
         
         Json(json!({
             "success": true,
-            "wallet_address": payload.wallet_address,
+            "wallet_address": wallet_address,
             "username": username,
             "balance": initial_balance,
             "is_new_account": true,
@@ -67,20 +92,20 @@ pub async fn connect_wallet(
         }))
     } else {
         // Existing account - return balance
-        let balance = app_state.ledger.balance(&payload.wallet_address);
+        let balance = app_state.ledger.balance(&wallet_address);
         
-        println!("✅ Existing wallet: {} (balance: {} BB)", payload.wallet_address, balance);
+        println!("✅ Existing wallet: {} (balance: {} BB)", wallet_address, balance);
         
         app_state.log_activity(
             "🔐",
             "WALLET_CONNECT",
             &format!("Wallet {} reconnected | Balance: {} BB", 
-                payload.wallet_address, balance)
+                wallet_address, balance)
         );
         
         Json(json!({
             "success": true,
-            "wallet_address": payload.wallet_address,
+            "wallet_address": wallet_address,
             "username": payload.username,
             "balance": balance,
             "is_new_account": false

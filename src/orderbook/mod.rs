@@ -111,7 +111,7 @@ impl OrderBookManager {
         if let Some(liquidity) = initial_liquidity {
             if liquidity > 0.0 {
                 let outcomes = vec!["YES".to_string(), "NO".to_string()];
-                let pool = CPMMPool::new(liquidity, outcomes, "HOUSE");
+                let pool = CPMMPool::new(liquidity, outcomes, "ORACLE");
                 self.cpmm_pools.insert(market_id.to_string(), pool);
             }
         }
@@ -452,7 +452,7 @@ impl OrderBookManager {
     pub fn add_cpmm_liquidity(&mut self, market_id: &str, amount: f64, provider: &str) -> Result<f64, String> {
         let outcomes = vec!["YES".to_string(), "NO".to_string()];
         let pool = self.cpmm_pools.entry(market_id.to_string())
-            .or_insert_with(|| CPMMPool::new(0.0, outcomes, "HOUSE"));
+            .or_insert_with(|| CPMMPool::new(0.0, outcomes, "ORACLE"));
 
         match pool.add_liquidity(provider, amount) {
             Ok(lp_tokens) => {

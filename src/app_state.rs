@@ -10,8 +10,104 @@ use crate::bridge::BridgeManager;
 use crate::ledger::Ledger;
 use crate::orderbook::OrderBookManager;
 use crate::shares::SharesManager;
+use crate::rpc::L1BlackBookRpc;
 
 pub type SharedState = Arc<Mutex<AppState>>;
+
+// ============================================================================
+// L2 SESSION TRACKING (Optimistic Execution)
+// ============================================================================
+
+/// Tracks an active L2 session for optimistic execution
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct L2Session {
+    /// Session ID (matches L1 session if started there)
+    pub session_id: String,
+    /// User's wallet address
+    pub wallet_address: String,
+    /// L1 balance when session started
+    pub l1_balance_snapshot: f64,
+    /// Current L2 balance (updated with bets)
+    pub l2_balance: f64,
+    /// Number of bets placed in this session
+    pub bet_count: u32,
+    /// Total profit/loss in this session
+    pub pnl: f64,
+    /// Unix timestamp when session started
+    pub started_at: u64,
+    /// Unix timestamp when session expires (1 hour default)
+    pub expires_at: u64,
+    /// Session status: "active", "settling", "settled", "expired"
+    pub status: String,
+    /// L1 settlement tx hash (if settled)
+    pub l1_settlement_hash: Option<String>,
+}
+
+impl L2Session {
+    pub fn new(wallet_address: String, l1_balance: f64, l2_credit: f64, session_id: String) -> Self {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+        
+        Self {
+            session_id,
+            wallet_address,
+            l1_balance_snapshot: l1_balance,
+            l2_balance: l2_credit,
+            bet_count: 0,
+            pnl: 0.0,
+            started_at: now,
+            expires_at: now + 3600, // 1 hour max session
+            status: "active".to_string(),
+            l1_settlement_hash: None,
+        }
+    }
+    
+    pub fn is_expired(&self) -> bool {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+        now > self.expires_at
+    }
+    
+    pub fn record_bet(&mut self, amount: f64, won: bool, payout: f64) {
+        self.bet_count += 1;
+        if won {
+            self.pnl += payout - amount;
+            self.l2_balance += payout - amount;
+        } else {
+            self.pnl -= amount;
+            self.l2_balance -= amount;
+        }
+    }
+    
+    pub fn time_remaining_secs(&self) -> u64 {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+        self.expires_at.saturating_sub(now)
+    }
+}
+
+/// Tracks a pending L2→L1 withdrawal
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct PendingWithdrawal {
+    pub bridge_id: String,
+    pub wallet_address: String,
+    pub amount: f64,
+    pub l1_target: String,
+    pub status: String,  // "pending", "l1_submitted", "completed", "failed", "refunded"
+    pub created_at: u64,
+    pub l1_tx_hash: Option<String>,
+    pub error: Option<String>,
+    /// Number of L1 poll attempts
+    pub poll_count: u32,
+    /// Last poll timestamp
+    pub last_poll: Option<u64>,
+}
 
 // ============================================================================
 // ORACLE/ADMIN AUTHORIZATION SYSTEM
@@ -37,18 +133,19 @@ impl Default for OracleConfig {
         let mut admin_addresses = HashSet::new();
         let mut oracle_whitelist = HashSet::new();
         
-        // Default admin is HOUSE account
-        admin_addresses.insert("HOUSE".to_string());
-        admin_addresses.insert("ADMIN".to_string());
+        // Default admin is ORACLE account (L2-only admin for market resolution)
+        admin_addresses.insert("ORACLE".to_string());
+        // Also accept the ORACLE's derived public key
+        admin_addresses.insert("cdcc4c18855728e00efd5bc22cd594d91f4bf305fea61d8a07492b5f7099e95e".to_string());
         
         // Add environment-configured admin if present
         if let Ok(admin) = std::env::var("BLACKBOOK_ADMIN_ADDRESS") {
             admin_addresses.insert(admin);
         }
         
-        // Default oracle is also HOUSE (can be expanded)
-        oracle_whitelist.insert("HOUSE".to_string());
+        // Default oracle whitelist
         oracle_whitelist.insert("ORACLE".to_string());
+        oracle_whitelist.insert("cdcc4c18855728e00efd5bc22cd594d91f4bf305fea61d8a07492b5f7099e95e".to_string());
         
         // Add environment-configured oracle if present
         if let Ok(oracle) = std::env::var("BLACKBOOK_ORACLE_ADDRESS") {
@@ -161,6 +258,12 @@ pub struct AppState {
     pub oracle_config: OracleConfig,
     /// Market resolution history
     pub resolutions: HashMap<String, MarketResolution>,
+    /// Active L2 sessions (optimistic execution)
+    pub sessions: HashMap<String, L2Session>,
+    /// Pending L2→L1 withdrawals
+    pub pending_withdrawals: HashMap<String, PendingWithdrawal>,
+    /// Completed L1 tx hashes (for idempotency)
+    pub processed_l1_txs: HashSet<String>,
 }
 
 impl AppState {
@@ -190,7 +293,15 @@ impl AppState {
             shares: SharesManager::new(),
             oracle_config,
             resolutions: HashMap::new(),
+            sessions: HashMap::new(),
+            pending_withdrawals: HashMap::new(),
+            processed_l1_txs: HashSet::new(),
         };
+
+        // Log L1 RPC config
+        let l1_url = std::env::var("L1_RPC_URL").unwrap_or_else(|_| "http://localhost:8080".to_string());
+        let l1_mock = std::env::var("L1_MOCK_MODE").unwrap_or_else(|_| "false".to_string());
+        println!("🔗 L1 RPC: {} (mock: {})", l1_url, l1_mock);
 
         println!("✅ BlackBook Prediction Market Initialized");
         println!("🔗 Network: Layer 2 (L1 sync: {})", if state.ledger.mock_mode { "mock" } else { "live" });

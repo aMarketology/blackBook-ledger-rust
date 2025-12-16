@@ -70,9 +70,9 @@ pub struct Recipe {
 }
 
 impl Ledger {
-    /// Initialize ledger with 8 real blockchain accounts + HOUSE
+    /// Initialize ledger with real blockchain accounts + ORACLE
     /// Uses GodMode for deterministic Ed25519-based addresses (same across restarts)
-    /// Each account gets 1000 BB tokens (BlackBook tokens), HOUSE gets 10,000 BB
+    /// Each account gets 1000 BB tokens (BlackBook tokens), ORACLE gets 10,000 BB
     pub fn new_full_node() -> Self {
         let mut accounts = HashMap::new();
         let mut balances = HashMap::new();

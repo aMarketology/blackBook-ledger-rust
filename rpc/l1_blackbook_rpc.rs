@@ -97,6 +97,91 @@ pub struct L1BridgeResponse {
 }
 
 // ============================================================================
+// L1 SESSION TYPES (Optimistic Execution)
+// ============================================================================
+
+/// Request to start an L2 session (mirrors L1 balance)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct L1SessionStartRequest {
+    pub wallet_address: String,
+    pub l2_session_id: String,
+    pub requested_amount: f64,
+    pub signature: String,
+    pub timestamp: u64,
+    pub nonce: String,
+}
+
+/// Session start response from L1
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct L1SessionStartResponse {
+    pub success: bool,
+    pub session_id: Option<String>,
+    pub l1_balance: Option<f64>,
+    pub l2_credit: Option<f64>,
+    pub expires_at: Option<u64>,
+    pub error: Option<String>,
+}
+
+/// Request to settle an L2 session (write PnL back to L1)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct L1SessionSettleRequest {
+    pub wallet_address: String,
+    pub session_id: String,
+    pub final_l2_balance: f64,
+    pub pnl: f64,  // Profit/Loss (+/-)
+    pub bet_count: u32,
+    pub signature: String,
+    pub timestamp: u64,
+}
+
+/// Session settle response from L1
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct L1SessionSettleResponse {
+    pub success: bool,
+    pub l1_tx_hash: Option<String>,
+    pub new_l1_balance: Option<f64>,
+    pub settled_pnl: Option<f64>,
+    pub error: Option<String>,
+}
+
+/// Session status response from L1
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct L1SessionStatusResponse {
+    pub success: bool,
+    pub session_id: Option<String>,
+    pub wallet_address: String,
+    pub l1_balance: f64,
+    pub l2_credit: f64,
+    pub status: String,  // "active", "settled", "expired"
+    pub created_at: Option<u64>,
+    pub expires_at: Option<u64>,
+    pub error: Option<String>,
+}
+
+/// L2→L1 withdraw request (release tokens from bridge)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct L1WithdrawRequest {
+    pub from_l2_address: String,
+    pub to_l1_address: String,
+    pub amount: f64,
+    pub bridge_id: String,
+    pub signature: String,
+    pub timestamp: u64,
+    pub nonce: String,
+}
+
+/// L2→L1 withdraw response
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct L1WithdrawResponse {
+    pub success: bool,
+    pub bridge_id: Option<String>,
+    pub l1_tx_hash: Option<String>,
+    pub status: String,  // "pending", "completed", "failed"
+    pub new_l1_balance: Option<f64>,
+    pub error: Option<String>,
+}
+
+// ============================================================================
 // L1 RPC CONFIG
 // ============================================================================
 
@@ -446,6 +531,197 @@ impl L1BlackBookRpc {
             .json::<L1BridgeResponse>()
             .await
             .map_err(|e| format!("Failed to parse bridge response: {}", e))
+    }
+
+    /// Request L2→L1 withdrawal (unlock tokens on L1)
+    /// POST /bridge/withdraw
+    pub async fn withdraw_to_l1(&mut self, request: L1WithdrawRequest) -> Result<L1WithdrawResponse, String> {
+        if self.config.mock_mode {
+            return Ok(L1WithdrawResponse {
+                success: true,
+                bridge_id: Some(request.bridge_id.clone()),
+                l1_tx_hash: Some(format!("0x{}", "a".repeat(64))),
+                status: "pending".to_string(),
+                new_l1_balance: Some(request.amount),
+                error: None,
+            });
+        }
+        
+        let url = format!("{}/bridge/withdraw", self.config.endpoint);
+        
+        let client = reqwest::Client::builder()
+            .timeout(self.config.timeout)
+            .build()
+            .map_err(|e| format!("Failed to create client: {}", e))?;
+        
+        let response = client
+            .post(&url)
+            .json(&request)
+            .send()
+            .await
+            .map_err(|e| format!("L1 withdraw request failed: {}", e))?;
+        
+        self.update_last_call();
+        
+        if response.status().is_success() {
+            response
+                .json::<L1WithdrawResponse>()
+                .await
+                .map_err(|e| format!("Failed to parse withdraw response: {}", e))
+        } else {
+            let status = response.status();
+            let body = response.text().await.unwrap_or_default();
+            Err(format!("L1 withdraw failed with status {}: {}", status, body))
+        }
+    }
+
+    // ========================================================================
+    // SESSION OPERATIONS (Optimistic Execution)
+    // ========================================================================
+    
+    /// Start an L2 session on L1 (locks L1 balance for L2 use)
+    /// POST /session/start
+    pub async fn start_session(&mut self, request: L1SessionStartRequest) -> Result<L1SessionStartResponse, String> {
+        if self.config.mock_mode {
+            return Ok(L1SessionStartResponse {
+                success: true,
+                session_id: Some(format!("session_{}", uuid::Uuid::new_v4())),
+                l1_balance: Some(10000.0),
+                l2_credit: Some(request.requested_amount),
+                expires_at: Some(
+                    std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .unwrap()
+                        .as_secs() + 3600  // 1 hour session
+                ),
+                error: None,
+            });
+        }
+        
+        let url = format!("{}/session/start", self.config.endpoint);
+        
+        let client = reqwest::Client::builder()
+            .timeout(self.config.timeout)
+            .build()
+            .map_err(|e| format!("Failed to create client: {}", e))?;
+        
+        let response = client
+            .post(&url)
+            .json(&request)
+            .send()
+            .await
+            .map_err(|e| format!("L1 session start failed: {}", e))?;
+        
+        self.update_last_call();
+        self.connected = response.status().is_success();
+        
+        if response.status().is_success() {
+            response
+                .json::<L1SessionStartResponse>()
+                .await
+                .map_err(|e| format!("Failed to parse session start response: {}", e))
+        } else {
+            let status = response.status();
+            let body = response.text().await.unwrap_or_default();
+            Err(format!("L1 session start failed with status {}: {}", status, body))
+        }
+    }
+    
+    /// Settle an L2 session on L1 (write PnL back to L1)
+    /// POST /session/settle
+    pub async fn settle_session(&mut self, request: L1SessionSettleRequest) -> Result<L1SessionSettleResponse, String> {
+        if self.config.mock_mode {
+            return Ok(L1SessionSettleResponse {
+                success: true,
+                l1_tx_hash: Some(format!("0x{}", "b".repeat(64))),
+                new_l1_balance: Some(request.final_l2_balance),
+                settled_pnl: Some(request.pnl),
+                error: None,
+            });
+        }
+        
+        let url = format!("{}/session/settle", self.config.endpoint);
+        
+        let client = reqwest::Client::builder()
+            .timeout(self.config.timeout)
+            .build()
+            .map_err(|e| format!("Failed to create client: {}", e))?;
+        
+        let response = client
+            .post(&url)
+            .json(&request)
+            .send()
+            .await
+            .map_err(|e| format!("L1 session settle failed: {}", e))?;
+        
+        self.update_last_call();
+        
+        if response.status().is_success() {
+            response
+                .json::<L1SessionSettleResponse>()
+                .await
+                .map_err(|e| format!("Failed to parse session settle response: {}", e))
+        } else {
+            let status = response.status();
+            let body = response.text().await.unwrap_or_default();
+            Err(format!("L1 session settle failed with status {}: {}", status, body))
+        }
+    }
+    
+    /// Get session status from L1
+    /// GET /session/status/:address
+    pub async fn get_session_status(&mut self, address: &str) -> Result<L1SessionStatusResponse, String> {
+        if self.config.mock_mode {
+            return Ok(L1SessionStatusResponse {
+                success: true,
+                session_id: None,
+                wallet_address: address.to_string(),
+                l1_balance: 10000.0,
+                l2_credit: 0.0,
+                status: "none".to_string(),
+                created_at: None,
+                expires_at: None,
+                error: None,
+            });
+        }
+        
+        let url = format!("{}/session/status/{}", self.config.endpoint, address);
+        
+        let client = reqwest::Client::builder()
+            .timeout(self.config.timeout)
+            .build()
+            .map_err(|e| format!("Failed to create client: {}", e))?;
+        
+        let response = client
+            .get(&url)
+            .send()
+            .await
+            .map_err(|e| format!("L1 session status failed: {}", e))?;
+        
+        self.update_last_call();
+        
+        if response.status().is_success() {
+            response
+                .json::<L1SessionStatusResponse>()
+                .await
+                .map_err(|e| format!("Failed to parse session status response: {}", e))
+        } else if response.status().as_u16() == 404 {
+            Ok(L1SessionStatusResponse {
+                success: true,
+                session_id: None,
+                wallet_address: address.to_string(),
+                l1_balance: 0.0,
+                l2_credit: 0.0,
+                status: "none".to_string(),
+                created_at: None,
+                expires_at: None,
+                error: None,
+            })
+        } else {
+            let status = response.status();
+            let body = response.text().await.unwrap_or_default();
+            Err(format!("L1 session status failed with status {}: {}", status, body))
+        }
     }
 }
 

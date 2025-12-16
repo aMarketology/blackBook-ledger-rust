@@ -18,18 +18,17 @@ use std::collections::HashMap;
 /// Master seed for deterministic key generation (NEVER use in production!)
 pub const GODMODE_SEED: &[u8; 32] = b"BLACKBOOK_GODMODE_MASTER_SEED_01";
 
-/// Test account names
-pub const TEST_ACCOUNT_NAMES: [&str; 9] = [
-    "ALICE", "BOB", "CHARLIE", "DIANA", 
-    "ETHAN", "FIONA", "GEORGE", "HANNAH",
-    "HOUSE"
+/// Test account names - Only Alice and Bob (real L1 accounts)
+/// ORACLE is the L2-only admin for market resolution
+pub const TEST_ACCOUNT_NAMES: [&str; 3] = [
+    "ALICE", "BOB", "ORACLE"
 ];
 
 /// Default initial balance for user test accounts (in BB tokens)
 pub const DEFAULT_USER_BALANCE: f64 = 1000.0;
 
-/// Default initial balance for HOUSE account (in BB tokens)
-pub const DEFAULT_HOUSE_BALANCE: f64 = 10000.0;
+/// Default initial balance for ORACLE account (in BB tokens)
+pub const DEFAULT_ORACLE_BALANCE: f64 = 10000.0;
 
 /// BB token value in USD
 pub const BB_TOKEN_VALUE_USD: f64 = 0.01;
@@ -166,8 +165,8 @@ impl GodMode {
         
         // Create all test accounts from the master seed
         for name in TEST_ACCOUNT_NAMES.iter() {
-            let balance = if *name == "HOUSE" {
-                DEFAULT_HOUSE_BALANCE
+            let balance = if *name == "ORACLE" {
+                DEFAULT_ORACLE_BALANCE
             } else {
                 DEFAULT_USER_BALANCE
             };
@@ -588,9 +587,9 @@ mod tests {
         // Should have all test accounts
         assert_eq!(balances.len(), TEST_ACCOUNT_NAMES.len());
         
-        // HOUSE should have 10,000 BB
-        let house = gm.get_account("HOUSE").unwrap();
-        assert_eq!(balances[&house.address], DEFAULT_HOUSE_BALANCE);
+        // ORACLE should have 10,000 BB
+        let oracle = gm.get_account("ORACLE").unwrap();
+        assert_eq!(balances[&oracle.address], DEFAULT_ORACLE_BALANCE);
         
         // ALICE should have 1,000 BB
         let alice = gm.get_account("ALICE").unwrap();

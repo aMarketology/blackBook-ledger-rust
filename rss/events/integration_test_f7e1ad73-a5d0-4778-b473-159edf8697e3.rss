@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0" xmlns:blackbook="https://blackbook.market/rss">
+  <channel>
+    <title>BlackBook Prediction Market</title>
+    <link>https://blackbook.market</link>
+    <description>Prediction market events on BlackBook Layer 2</description>
+    <item>
+      <guid isPermaLink="false">integration_test_f7e1ad73-a5d0-4778-b473-159edf8697e3</guid>
+      <title>L1-L2 Integration Test [1765863703544]</title>
+      <description>Testing full L1↔L2 signature verification with real wallets</description>
+      <link></link>
+      <pubDate>2025-12-16T05:41:43.851405400+00:00</pubDate>
+      <blackbook:marketId>integration_test_f7e1ad73-a5d0-4778-b473-159edf8697e3</blackbook:marketId>
+      <blackbook:category>test</blackbook:category>
+      <blackbook:marketType>binary</blackbook:marketType>
+      <blackbook:outcomes>YES,NO</blackbook:outcomes>
+      <blackbook:probabilities>0.5000,0.5000</blackbook:probabilities>
+      <blackbook:source>integration_test_f7e1ad73-a5d0-4778-b473-159edf8697e3</blackbook:source>
+      <blackbook:tags></blackbook:tags>
+      <blackbook:addedToLedger>true</blackbook:addedToLedger>
+      <blackbook:freezeDate>TBD</blackbook:freezeDate>
+      <blackbook:resolutionDate>TBD</blackbook:resolutionDate>
+    </item>
+  </channel>
+</rss>

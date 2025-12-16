@@ -396,7 +396,7 @@ pub async fn initialize_all_market_liquidity(
             // === RECORD TO LEDGER ===
             let liquidity_tx = Transaction::liquidity_added(
                 &market_id,
-                "HOUSE",
+                "ORACLE",
                 liquidity_amount,
                 &format!("bulk_init_{}", market_id)
             );
@@ -444,9 +444,9 @@ pub async fn initialize_all_market_liquidity(
 pub struct InitLiquidityRequest {
     /// Amount of BB tokens to add (minimum 10,000, no maximum)
     pub amount: Option<f64>,
-    /// Funder's L1 address (for user-funded) - if omitted, house mints
+    /// Funder's L1 address (for user-funded) - if omitted, oracle mints
     pub funder: Option<String>,
-    /// If true, admin mints tokens (house-funded)
+    /// If true, admin mints tokens (oracle-funded)
     #[serde(default)]
     pub house_funded: bool,
 }
@@ -461,7 +461,7 @@ pub struct InitLiquidityRequest {
 /// 
 /// Body:
 ///   { "amount": 15000, "funder": "L1_xxx..." }  // User-funded
-///   { "amount": 10000, "house_funded": true }   // House-funded (admin mint)
+///   { "amount": 10000, "house_funded": true }   // Oracle-funded (admin mint)
 pub async fn initialize_market_liquidity(
     State(state): State<SharedState>,
     Path(market_id_raw): Path<String>,
@@ -521,17 +521,17 @@ pub async fn initialize_market_liquidity(
     
     // Determine funding source and execute
     let (l1_result, funding_type, funder_display) = if payload.house_funded {
-        // House-funded: Admin mints tokens
+        // Oracle-funded: Admin mints tokens
         let result = mint_liquidity_on_l1(&escrow_address, amount).await;
-        (result, "house_mint", "HOUSE".to_string())
+        (result, "oracle_mint", "ORACLE".to_string())
     } else if let Some(ref funder) = payload.funder {
         // User-funded: Transfer from user's L1 balance to escrow
         let result = transfer_l1_to_escrow(funder, &escrow_address, amount).await;
         (result, "user_funded", funder.clone())
     } else {
-        // Default to house-funded if no funder specified
+        // Default to oracle-funded if no funder specified
         let result = mint_liquidity_on_l1(&escrow_address, amount).await;
-        (result, "house_mint", "HOUSE".to_string())
+        (result, "oracle_mint", "ORACLE".to_string())
     };
     
     // Update market with CPMM pool
@@ -2158,8 +2158,9 @@ pub async fn get_pending_settlements(
 // BRIDGE ENDPOINT HANDLERS
 // ═══════════════════════════════════════════════════════════════════════════════
 
-use crate::bridge::{BridgeRequest, BridgeCompleteRequest, BridgeDirection};
-use crate::rpc::{SignedTransaction, TransactionPayload};
+use crate::bridge::{BridgeCompleteRequest, BridgeDirection};
+use crate::rpc::{L1RpcConfig, L1WithdrawRequest};
+use crate::app_state::PendingWithdrawal;
 
 #[derive(Debug, Deserialize)]
 pub struct InitiateBridgeRequest {
@@ -2173,7 +2174,9 @@ pub struct InitiateBridgeRequest {
 
 /// POST /bridge/withdraw - Initiate L2→L1 bridge (withdraw from L2)
 /// 
-/// Locks BB on L2 and initiates bridge to L1.
+/// Locks BB on L2, calls L1's /bridge/withdraw endpoint.
+/// Returns pending status - client can poll /bridge/status/:bridge_id
+/// If L1 rejects, automatically refunds L2 balance.
 pub async fn bridge_withdraw(
     State(state): State<SharedState>,
     Json(req): Json<InitiateBridgeRequest>,
@@ -2191,73 +2194,178 @@ pub async fn bridge_withdraw(
         }))));
     }
     
-    let mut app = state.lock().unwrap();
+    // --- Phase 1: Validation & L2 Debit ---
+    let (bridge_id, bridge) = {
+        let mut app = state.lock().unwrap();
+        
+        // Check nonce
+        let last_nonce = app.nonces.get(&req.wallet).copied().unwrap_or(0);
+        if req.nonce <= last_nonce {
+            return Err((StatusCode::BAD_REQUEST, Json(json!({
+                "success": false,
+                "error": format!("Invalid nonce: got {}, expected > {}", req.nonce, last_nonce)
+            }))));
+        }
+        
+        // Check balance
+        let balance = app.ledger.balance(&req.wallet);
+        if balance < req.amount {
+            return Err((StatusCode::BAD_REQUEST, Json(json!({
+                "success": false,
+                "error": format!("Insufficient balance: have {} BB, need {} BB", balance, req.amount)
+            }))));
+        }
+        
+        // Validate amount bounds
+        if req.amount < 0.01 {
+            return Err((StatusCode::BAD_REQUEST, Json(json!({
+                "success": false,
+                "error": "Minimum bridge amount is 0.01 BB"
+            }))));
+        }
+        if req.amount > 1_000_000.0 {
+            return Err((StatusCode::BAD_REQUEST, Json(json!({
+                "success": false,
+                "error": "Maximum bridge amount is 1,000,000 BB"
+            }))));
+        }
+        
+        // Debit balance (lock on L2)
+        app.ledger.debit(&req.wallet, req.amount);
+        app.nonces.insert(req.wallet.clone(), req.nonce);
+        
+        // Create and store bridge record
+        let bridge = app.bridge_manager.store_pending_withdrawal(
+            req.wallet.clone(),
+            req.target_address.clone(),
+            req.amount,
+        );
+        let bridge_id = bridge.bridge_id.clone();
+        
+        // Store pending withdrawal for tracking
+        app.pending_withdrawals.insert(bridge_id.clone(), PendingWithdrawal {
+            bridge_id: bridge_id.clone(),
+            wallet_address: req.wallet.clone(),
+            amount: req.amount,
+            l1_target: req.target_address.clone(),
+            status: "pending".to_string(),
+            created_at: now,
+            l1_tx_hash: None,
+            error: None,
+            poll_count: 0,
+            last_poll: None,
+        });
+        
+        app.log_activity("🌉", "BRIDGE_WITHDRAW_INIT", &format!(
+            "{} initiated bridge of {} BB to L1 {}",
+            req.wallet, req.amount, req.target_address
+        ));
+        
+        (bridge_id, bridge)
+    }; // Release lock before async L1 call
     
-    // Check nonce
-    let last_nonce = app.nonces.get(&req.wallet).copied().unwrap_or(0);
-    if req.nonce <= last_nonce {
-        return Err((StatusCode::BAD_REQUEST, Json(json!({
-            "success": false,
-            "error": format!("Invalid nonce: got {}, expected > {}", req.nonce, last_nonce)
-        }))));
+    // --- Phase 2: Call L1 /bridge/withdraw (async) ---
+    let mut l1_rpc = L1BlackBookRpc::new(L1RpcConfig::from_env());
+    
+    let l1_request = L1WithdrawRequest {
+        from_l2_address: req.wallet.clone(),
+        to_l1_address: req.target_address.clone(),
+        amount: req.amount,
+        bridge_id: bridge_id.clone(),
+        signature: req.signature.clone(),
+        timestamp: req.timestamp,
+        nonce: req.nonce.to_string(),
+    };
+    
+    match l1_rpc.withdraw_to_l1(l1_request).await {
+        Ok(l1_response) => {
+            let mut app = state.lock().unwrap();
+            
+            if l1_response.success {
+                // L1 accepted - update bridge status
+                let _ = app.bridge_manager.update_withdrawal_l1_submitted(
+                    &bridge_id,
+                    l1_response.l1_tx_hash.clone(),
+                );
+                
+                // Update pending withdrawal
+                if let Some(pw) = app.pending_withdrawals.get_mut(&bridge_id) {
+                    pw.status = "l1_submitted".to_string();
+                    pw.l1_tx_hash = l1_response.l1_tx_hash.clone();
+                }
+                
+                app.log_activity("🌉", "BRIDGE_L1_ACCEPTED", &format!(
+                    "L1 accepted withdrawal {} for {} BB (tx: {:?})",
+                    bridge_id, req.amount, l1_response.l1_tx_hash
+                ));
+                
+                Ok(Json(json!({
+                    "success": true,
+                    "bridge_id": bridge_id,
+                    "direction": "L2_TO_L1",
+                    "from_address": req.wallet,
+                    "to_address": req.target_address,
+                    "amount": req.amount,
+                    "status": l1_response.status,
+                    "l1_tx_hash": l1_response.l1_tx_hash,
+                    "message": "Bridge submitted to L1. Poll /bridge/status/:bridge_id for confirmation."
+                })))
+            } else {
+                // L1 rejected - refund L2 balance
+                let error_msg = l1_response.error.unwrap_or_else(|| "L1 rejected withdrawal".to_string());
+                
+                // Refund L2 balance
+                app.ledger.credit(&req.wallet, req.amount);
+                let _ = app.bridge_manager.refund_withdrawal(&bridge_id, error_msg.clone());
+                
+                // Update pending withdrawal
+                if let Some(pw) = app.pending_withdrawals.get_mut(&bridge_id) {
+                    pw.status = "refunded".to_string();
+                    pw.error = Some(error_msg.clone());
+                }
+                
+                app.log_activity("🌉", "BRIDGE_L1_REJECTED", &format!(
+                    "L1 rejected withdrawal {} - refunded {} BB to {}",
+                    bridge_id, req.amount, req.wallet
+                ));
+                
+                Err((StatusCode::BAD_REQUEST, Json(json!({
+                    "success": false,
+                    "bridge_id": bridge_id,
+                    "error": error_msg,
+                    "refunded": true,
+                    "message": "L1 rejected withdrawal. L2 balance has been refunded."
+                }))))
+            }
+        }
+        Err(l1_error) => {
+            // L1 communication error - refund L2 balance
+            let mut app = state.lock().unwrap();
+            
+            // Refund L2 balance
+            app.ledger.credit(&req.wallet, req.amount);
+            let _ = app.bridge_manager.refund_withdrawal(&bridge_id, l1_error.clone());
+            
+            // Update pending withdrawal
+            if let Some(pw) = app.pending_withdrawals.get_mut(&bridge_id) {
+                pw.status = "refunded".to_string();
+                pw.error = Some(l1_error.clone());
+            }
+            
+            app.log_activity("🌉", "BRIDGE_L1_ERROR", &format!(
+                "L1 communication failed for {} - refunded {} BB to {}",
+                bridge_id, req.amount, req.wallet
+            ));
+            
+            Err((StatusCode::SERVICE_UNAVAILABLE, Json(json!({
+                "success": false,
+                "bridge_id": bridge_id,
+                "error": format!("L1 communication failed: {}", l1_error),
+                "refunded": true,
+                "message": "Could not reach L1. L2 balance has been refunded."
+            }))))
+        }
     }
-    
-    // Check balance
-    let balance = app.ledger.balance(&req.wallet);
-    if balance < req.amount {
-        return Err((StatusCode::BAD_REQUEST, Json(json!({
-            "success": false,
-            "error": format!("Insufficient balance: have {} BB, need {} BB", balance, req.amount)
-        }))));
-    }
-    
-    // Validate amount bounds
-    if req.amount < 0.01 {
-        return Err((StatusCode::BAD_REQUEST, Json(json!({
-            "success": false,
-            "error": "Minimum bridge amount is 0.01 BB"
-        }))));
-    }
-    if req.amount > 1_000_000.0 {
-        return Err((StatusCode::BAD_REQUEST, Json(json!({
-            "success": false,
-            "error": "Maximum bridge amount is 1,000,000 BB"
-        }))));
-    }
-    
-    // Debit balance (lock on L2)
-    app.ledger.debit(&req.wallet, req.amount);
-    app.nonces.insert(req.wallet.clone(), req.nonce);
-    
-    // Create bridge record
-    let bridge_id = format!("bridge_{}", uuid::Uuid::new_v4().simple());
-    
-    // Create a pending bridge entry
-    let _bridge = crate::bridge::PendingBridge::new(
-        BridgeDirection::L2ToL1,
-        req.wallet.clone(),
-        req.target_address.clone(),
-        req.amount,
-    );
-    
-    // Store bridge (simplified - using bridge_manager)
-    // In full implementation, bridge_manager.initiate would be called with SignedTransaction
-    
-    app.log_activity("🌉", "BRIDGE_WITHDRAW", &format!(
-        "{} initiated bridge of {} BB to L1 address {}",
-        req.wallet, req.amount, req.target_address
-    ));
-    
-    Ok(Json(json!({
-        "success": true,
-        "bridge_id": bridge_id,
-        "direction": "L2_TO_L1",
-        "from_address": req.wallet,
-        "to_address": req.target_address,
-        "amount": req.amount,
-        "status": "pending",
-        "message": "Bridge initiated. Tokens locked on L2. Awaiting L1 confirmation."
-    })))
 }
 
 #[derive(Debug, Deserialize)]
@@ -2274,6 +2382,7 @@ pub struct BridgeDepositRequest {
 /// 
 /// Called by L1 (or relayer) when L1→L2 bridge is confirmed.
 /// Mints BB on L2 for the recipient.
+/// Idempotent - ignores duplicate l1_tx_hash.
 pub async fn bridge_deposit(
     State(state): State<SharedState>,
     Json(req): Json<BridgeDepositRequest>,
@@ -2286,6 +2395,17 @@ pub async fn bridge_deposit(
             "success": false,
             "error": "Amount must be positive"
         }))));
+    }
+    
+    // Idempotency check - prevent double-crediting same L1 tx
+    if app.processed_l1_txs.contains(&req.l1_tx_hash) {
+        return Ok(Json(json!({
+            "success": true,
+            "bridge_id": req.bridge_id,
+            "message": "Already processed - idempotent",
+            "l1_tx_hash": req.l1_tx_hash,
+            "idempotent": true
+        })));
     }
     
     // Complete bridge via manager
@@ -2302,6 +2422,9 @@ pub async fn bridge_deposit(
         Ok(_bridge) => {
             // Credit the L2 wallet
             app.ledger.credit(&req.to_address, req.amount);
+            
+            // Mark L1 tx as processed (idempotency)
+            app.processed_l1_txs.insert(req.l1_tx_hash.clone());
             
             app.log_activity("🌉", "BRIDGE_DEPOSIT", &format!(
                 "L1→L2 bridge complete: {} BB to {} (L1 tx: {})",
@@ -2401,5 +2524,303 @@ pub async fn get_bridge_stats(
             "l2_to_l1_count": stats.l2_to_l1,
             "total_volume": stats.total_volume
         }
+    }))
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// SESSION HANDLERS (Optimistic Execution)
+// ═══════════════════════════════════════════════════════════════════════════════
+
+use crate::app_state::L2Session;
+use crate::rpc::{L1SessionStartRequest, L1SessionSettleRequest};
+
+#[derive(Debug, Deserialize)]
+pub struct SessionStartRequest {
+    pub wallet_address: String,
+    pub requested_amount: f64,
+    pub signature: String,
+    pub timestamp: u64,
+    pub nonce: String,
+}
+
+/// POST /session/start - Start an L2 optimistic session
+/// 
+/// Calls L1 to lock balance, creates L2 session for instant betting.
+/// Session expires after 1 hour (auto-settle required).
+pub async fn session_start(
+    State(state): State<SharedState>,
+    Json(req): Json<SessionStartRequest>,
+) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs();
+    
+    // Validate timestamp
+    if now.abs_diff(req.timestamp) > 300 {
+        return Err((StatusCode::UNAUTHORIZED, Json(json!({
+            "success": false,
+            "error": "Session request expired"
+        }))));
+    }
+    
+    // Check if user already has active session
+    {
+        let app = state.lock().unwrap();
+        if let Some(existing) = app.sessions.get(&req.wallet_address) {
+            if existing.status == "active" && !existing.is_expired() {
+                return Err((StatusCode::CONFLICT, Json(json!({
+                    "success": false,
+                    "error": "Active session already exists",
+                    "session_id": existing.session_id,
+                    "expires_in_secs": existing.time_remaining_secs()
+                }))));
+            }
+        }
+    }
+    
+    // Generate session ID
+    let session_id = format!("session_{}", uuid::Uuid::new_v4().simple());
+    
+    // Call L1 to start session (lock L1 balance)
+    let mut l1_rpc = L1BlackBookRpc::new(L1RpcConfig::from_env());
+    
+    let l1_request = L1SessionStartRequest {
+        wallet_address: req.wallet_address.clone(),
+        l2_session_id: session_id.clone(),
+        requested_amount: req.requested_amount,
+        signature: req.signature.clone(),
+        timestamp: req.timestamp,
+        nonce: req.nonce.clone(),
+    };
+    
+    match l1_rpc.start_session(l1_request).await {
+        Ok(l1_response) => {
+            if l1_response.success {
+                let mut app = state.lock().unwrap();
+                
+                let l2_credit = l1_response.l2_credit.unwrap_or(req.requested_amount);
+                let l1_balance = l1_response.l1_balance.unwrap_or(0.0);
+                
+                // Create L2 session
+                let session = L2Session::new(
+                    req.wallet_address.clone(),
+                    l1_balance,
+                    l2_credit,
+                    l1_response.session_id.clone().unwrap_or(session_id.clone()),
+                );
+                
+                // Credit L2 balance for optimistic execution
+                app.ledger.credit(&req.wallet_address, l2_credit);
+                
+                // Store session
+                app.sessions.insert(req.wallet_address.clone(), session.clone());
+                
+                app.log_activity("🎮", "SESSION_START", &format!(
+                    "{} started session with {} BB credit (L1 balance: {})",
+                    req.wallet_address, l2_credit, l1_balance
+                ));
+                
+                Ok(Json(json!({
+                    "success": true,
+                    "session_id": session.session_id,
+                    "wallet_address": req.wallet_address,
+                    "l1_balance": l1_balance,
+                    "l2_credit": l2_credit,
+                    "expires_at": session.expires_at,
+                    "expires_in_secs": session.time_remaining_secs(),
+                    "status": "active",
+                    "message": "Session started. You can now bet on L2 instantly."
+                })))
+            } else {
+                let error = l1_response.error.unwrap_or_else(|| "L1 rejected session start".to_string());
+                Err((StatusCode::BAD_REQUEST, Json(json!({
+                    "success": false,
+                    "error": error
+                }))))
+            }
+        }
+        Err(e) => {
+            Err((StatusCode::SERVICE_UNAVAILABLE, Json(json!({
+                "success": false,
+                "error": format!("L1 communication failed: {}", e)
+            }))))
+        }
+    }
+}
+
+#[derive(Debug, Deserialize)]
+pub struct SessionSettleRequest {
+    pub wallet_address: String,
+    pub signature: String,
+    pub timestamp: u64,
+}
+
+/// POST /session/settle - Settle an L2 session (write PnL to L1)
+/// 
+/// Settles all L2 activity back to L1. Required before:
+/// - Session expires (1 hour max)
+/// - User wants to withdraw to L1
+/// - User wants to start a new session
+pub async fn session_settle(
+    State(state): State<SharedState>,
+    Json(req): Json<SessionSettleRequest>,
+) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs();
+    
+    // Get session info
+    let (session, current_l2_balance) = {
+        let app = state.lock().unwrap();
+        
+        let session = app.sessions.get(&req.wallet_address)
+            .ok_or_else(|| (StatusCode::NOT_FOUND, Json(json!({
+                "success": false,
+                "error": "No active session found"
+            }))))?
+            .clone();
+        
+        if session.status != "active" {
+            return Err((StatusCode::BAD_REQUEST, Json(json!({
+                "success": false,
+                "error": format!("Session is not active (status: {})", session.status)
+            }))));
+        }
+        
+        let current_balance = app.ledger.balance(&req.wallet_address);
+        (session, current_balance)
+    };
+    
+    // Calculate final PnL
+    let initial_credit = session.l2_balance;
+    let pnl = current_l2_balance - initial_credit;
+    
+    // Call L1 to settle session
+    let mut l1_rpc = L1BlackBookRpc::new(L1RpcConfig::from_env());
+    
+    let l1_request = L1SessionSettleRequest {
+        wallet_address: req.wallet_address.clone(),
+        session_id: session.session_id.clone(),
+        final_l2_balance: current_l2_balance,
+        pnl,
+        bet_count: session.bet_count,
+        signature: req.signature.clone(),
+        timestamp: req.timestamp,
+    };
+    
+    match l1_rpc.settle_session(l1_request).await {
+        Ok(l1_response) => {
+            if l1_response.success {
+                let mut app = state.lock().unwrap();
+                
+                // Clear L2 balance (settled to L1)
+                app.ledger.debit(&req.wallet_address, current_l2_balance);
+                
+                // Update session status
+                if let Some(s) = app.sessions.get_mut(&req.wallet_address) {
+                    s.status = "settled".to_string();
+                    s.l1_settlement_hash = l1_response.l1_tx_hash.clone();
+                }
+                
+                app.log_activity("🎮", "SESSION_SETTLE", &format!(
+                    "{} settled session: {} bets, PnL: {:.2} BB, new L1 balance: {:?}",
+                    req.wallet_address, session.bet_count, pnl, l1_response.new_l1_balance
+                ));
+                
+                Ok(Json(json!({
+                    "success": true,
+                    "session_id": session.session_id,
+                    "wallet_address": req.wallet_address,
+                    "bet_count": session.bet_count,
+                    "final_l2_balance": current_l2_balance,
+                    "pnl": pnl,
+                    "l1_tx_hash": l1_response.l1_tx_hash,
+                    "new_l1_balance": l1_response.new_l1_balance,
+                    "status": "settled",
+                    "message": "Session settled. PnL written to L1."
+                })))
+            } else {
+                let error = l1_response.error.unwrap_or_else(|| "L1 rejected settlement".to_string());
+                Err((StatusCode::BAD_REQUEST, Json(json!({
+                    "success": false,
+                    "error": error
+                }))))
+            }
+        }
+        Err(e) => {
+            // L1 failed - session remains active, user can retry
+            Err((StatusCode::SERVICE_UNAVAILABLE, Json(json!({
+                "success": false,
+                "error": format!("L1 settlement failed: {}. Session remains active, please retry.", e)
+            }))))
+        }
+    }
+}
+
+/// GET /session/status/:wallet - Get session status
+pub async fn session_status(
+    State(state): State<SharedState>,
+    Path(wallet): Path<String>,
+) -> Json<Value> {
+    let app = state.lock().unwrap();
+    
+    if let Some(session) = app.sessions.get(&wallet) {
+        let current_balance = app.ledger.balance(&wallet);
+        let pnl = current_balance - session.l2_balance;
+        
+        Json(json!({
+            "success": true,
+            "session": {
+                "session_id": session.session_id,
+                "wallet_address": session.wallet_address,
+                "l1_balance_snapshot": session.l1_balance_snapshot,
+                "initial_l2_credit": session.l2_balance,
+                "current_l2_balance": current_balance,
+                "bet_count": session.bet_count,
+                "pnl": pnl,
+                "started_at": session.started_at,
+                "expires_at": session.expires_at,
+                "expires_in_secs": session.time_remaining_secs(),
+                "is_expired": session.is_expired(),
+                "status": session.status,
+                "l1_settlement_hash": session.l1_settlement_hash
+            }
+        }))
+    } else {
+        Json(json!({
+            "success": true,
+            "session": null,
+            "message": "No session found for this wallet"
+        }))
+    }
+}
+
+/// GET /session/list - List all active sessions
+pub async fn session_list(
+    State(state): State<SharedState>,
+) -> Json<Value> {
+    let app = state.lock().unwrap();
+    
+    let sessions: Vec<_> = app.sessions.values()
+        .filter(|s| s.status == "active")
+        .map(|s| {
+            let current_balance = app.ledger.balance(&s.wallet_address);
+            json!({
+                "session_id": s.session_id,
+                "wallet_address": s.wallet_address,
+                "l2_balance": current_balance,
+                "bet_count": s.bet_count,
+                "expires_in_secs": s.time_remaining_secs(),
+                "is_expired": s.is_expired()
+            })
+        })
+        .collect();
+    
+    Json(json!({
+        "success": true,
+        "active_sessions": sessions.len(),
+        "sessions": sessions
     }))
 }

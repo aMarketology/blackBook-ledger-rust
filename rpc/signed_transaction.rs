@@ -482,7 +482,7 @@ mod tests {
             amount: 1000.0,
         };
 
-        let tx = SignedTransaction::new(&godmode, "CHARLIE", 1, payload)
+        let tx = SignedTransaction::new(&godmode, "BOB", 1, payload)
             .expect("Should create transaction");
 
         assert_eq!(tx.tx_type, SignedTxType::Bridge);
@@ -560,7 +560,7 @@ mod tests {
             liquidity: 10000.0,
         };
 
-        let tx = SignedTransaction::new(&godmode, "HOUSE", 1, payload)
+        let tx = SignedTransaction::new(&godmode, "ORACLE", 1, payload)
             .expect("Should create transaction");
 
         tx.validate().expect("Transaction should be valid");
@@ -594,7 +594,7 @@ mod tests {
         let godmode = GodMode::new();
         
         // Use actual account names from godmode::TEST_ACCOUNT_NAMES
-        let accounts = ["ALICE", "BOB", "CHARLIE", "DIANA", "ETHAN", "FIONA", "GEORGE", "HANNAH", "HOUSE"];
+        let accounts = ["ALICE", "BOB", "ORACLE"];
         
         for (i, account) in accounts.iter().enumerate() {
             let payload = TransactionPayload::Transfer {
@@ -681,7 +681,7 @@ mod tests {
             amount: 50.0,
         };
 
-        let tx = SignedTransaction::new(&godmode, "DIANA", 1, payload)
+        let tx = SignedTransaction::new(&godmode, "ALICE", 1, payload)
             .expect("Should create transaction");
 
         tx.validate_with_l1().await

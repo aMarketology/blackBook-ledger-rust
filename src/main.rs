@@ -97,10 +97,16 @@ async fn main() {
         
         // ===== BRIDGE ENDPOINTS (L1↔L2 Token Movement) =====
         .route("/bridge/deposit", post(bridge_deposit))     // L1→L2 (receive from L1)
-        .route("/bridge/withdraw", post(bridge_withdraw))   // L2→L1 (send to L1)
+        .route("/bridge/withdraw", post(bridge_withdraw))   // L2→L1 (send to L1) - calls L1, refunds on failure
         .route("/bridge/status/:bridge_id", get(get_bridge_status))
         .route("/bridge/list/:wallet", get(list_wallet_bridges))
         .route("/bridge/stats", get(get_bridge_stats))
+        
+        // ===== SESSION ENDPOINTS (Optimistic Execution) =====
+        .route("/session/start", post(session_start))       // Start L2 session (mirrors L1 balance)
+        .route("/session/settle", post(session_settle))     // Settle session (write PnL to L1)
+        .route("/session/status/:wallet", get(session_status)) // Get session status
+        .route("/session/list", get(session_list))          // List all active sessions
         
         // ===== ORACLE/ADMIN MANAGEMENT =====
         .route("/admin/oracles", post(add_oracle))

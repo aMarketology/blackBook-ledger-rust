@@ -565,6 +565,111 @@ impl Default for BridgeManager {
 }
 
 // ============================================================================
+// WITHDRAWAL MANAGEMENT (L2→L1 with L1 confirmation)
+// ============================================================================
+
+impl BridgeManager {
+    /// Store a pending withdrawal and return its bridge_id
+    pub fn store_pending_withdrawal(
+        &self,
+        from_address: String,
+        to_address: String,
+        amount: f64,
+    ) -> PendingBridge {
+        let mut bridge = PendingBridge::new(
+            BridgeDirection::L2ToL1,
+            from_address.clone(),
+            to_address,
+            amount,
+        );
+        
+        let bridge_id = bridge.bridge_id.clone();
+        
+        // Store in both maps
+        {
+            let mut bridges = self.bridges.lock().unwrap();
+            bridges.insert(bridge_id.clone(), bridge.clone());
+        }
+        {
+            let mut by_addr = self.bridges_by_address.lock().unwrap();
+            by_addr
+                .entry(from_address)
+                .or_insert_with(Vec::new)
+                .push(bridge_id);
+        }
+        
+        bridge
+    }
+    
+    /// Update withdrawal with L1 response (pending → l1_submitted)
+    pub fn update_withdrawal_l1_submitted(
+        &self,
+        bridge_id: &str,
+        l1_tx_hash: Option<String>,
+    ) -> Result<(), BridgeError> {
+        let mut bridges = self.bridges.lock().unwrap();
+        let bridge = bridges.get_mut(bridge_id)
+            .ok_or_else(|| BridgeError::BridgeNotFound(bridge_id.to_string()))?;
+        
+        if bridge.status.is_terminal() {
+            return Err(BridgeError::BridgeAlreadyCompleted(bridge_id.to_string()));
+        }
+        
+        // Move to confirmed state (L1 accepted the request)
+        bridge.status = BridgeStatus::Confirmed;
+        bridge.l1_tx_hash = l1_tx_hash;
+        
+        Ok(())
+    }
+    
+    /// Complete a withdrawal after L1 confirms
+    pub fn complete_withdrawal(&self, bridge_id: &str, l1_tx_hash: String, l1_slot: u64) -> Result<PendingBridge, BridgeError> {
+        let mut bridges = self.bridges.lock().unwrap();
+        let bridge = bridges.get_mut(bridge_id)
+            .ok_or_else(|| BridgeError::BridgeNotFound(bridge_id.to_string()))?;
+        
+        if bridge.status == BridgeStatus::Completed {
+            return Err(BridgeError::BridgeAlreadyCompleted(bridge_id.to_string()));
+        }
+        
+        bridge.l1_tx_hash = Some(l1_tx_hash);
+        bridge.l1_slot = Some(l1_slot);
+        bridge.complete();
+        
+        Ok(bridge.clone())
+    }
+    
+    /// Refund a failed withdrawal (mark as failed, caller should refund L2 balance)
+    pub fn refund_withdrawal(&self, bridge_id: &str, error: String) -> Result<PendingBridge, BridgeError> {
+        let mut bridges = self.bridges.lock().unwrap();
+        let bridge = bridges.get_mut(bridge_id)
+            .ok_or_else(|| BridgeError::BridgeNotFound(bridge_id.to_string()))?;
+        
+        if bridge.status.is_terminal() {
+            return Err(BridgeError::BridgeAlreadyCompleted(bridge_id.to_string()));
+        }
+        
+        bridge.fail(format!("Refunded: {}", error));
+        
+        Ok(bridge.clone())
+    }
+    
+    /// Get all pending L2→L1 withdrawals that need L1 polling
+    pub fn get_pending_l2_to_l1(&self) -> Vec<PendingBridge> {
+        let bridges = self.bridges.lock().unwrap();
+        bridges
+            .values()
+            .filter(|b| {
+                b.direction == BridgeDirection::L2ToL1 && 
+                !b.status.is_terminal() &&
+                b.status != BridgeStatus::Completed
+            })
+            .cloned()
+            .collect()
+    }
+}
+
+// ============================================================================
 // BRIDGE STATS
 // ============================================================================
 
