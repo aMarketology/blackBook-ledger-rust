@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0" xmlns:blackbook="https://blackbook.market/rss">
+  <channel>
+    <title>BlackBook Prediction Market</title>
+    <link>https://blackbook.market</link>
+    <description>Prediction market events on BlackBook Layer 2</description>
+    <item>
+      <guid isPermaLink="false">andrew-tate-chase-demoor-8dda0c</guid>
+      <title>Will &apos;Andrew Tate Vs. Chase DeMoor: Date, Time, Full Car&apos; predictions come true?</title>
+      <description>Based on: Andrew Tate Vs. Chase DeMoor: Date, Time, Full Card And How To Watch</description>
+      <link>https://www.forbes.com/sites/brianmazique/2025/12/16/andrew-tate-vs-chase-demoor-date-time-full-card-and-how-to-watch/</link>
+      <pubDate>2025-12-17T02:38:38.114596+00:00</pubDate>
+      <blackbook:marketId>andrew-tate-chase-demoor-8dda0c</blackbook:marketId>
+      <blackbook:category>uncategorized</blackbook:category>
+      <blackbook:marketType>binary</blackbook:marketType>
+      <blackbook:outcomes>Yes,No</blackbook:outcomes>
+      <blackbook:probabilities>0.5000,0.5000</blackbook:probabilities>
+      <blackbook:source>andrew-tate-chase-demoor-8dda0c</blackbook:source>
+      <blackbook:tags></blackbook:tags>
+      <blackbook:addedToLedger>true</blackbook:addedToLedger>
+      <blackbook:freezeDate>TBD</blackbook:freezeDate>
+      <blackbook:resolutionDate>TBD</blackbook:resolutionDate>
+    </item>
+  </channel>
+</rss>

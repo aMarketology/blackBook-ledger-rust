@@ -88,6 +88,7 @@ async fn main() {
         .route("/transfer", post(transfer))
         .route("/ledger", get(get_ledger_activity))
         .route("/ledger/transactions", get(get_ledger_transactions))  // Public ledger with filtering
+        .route("/ledger/unified", get(get_unified_ledger))  // Complete L1/L2 overview
         
         // ===== L1 SETTLEMENT ENDPOINTS =====
         .route("/settle", post(settle_to_l1_real))           // Submit resolutions to L1

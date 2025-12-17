@@ -11,7 +11,30 @@ use crate::app_state::SharedState;
 use crate::models::*;
 use crate::market_resolve::cpmm::{CPMMPool, VIABILITY_THRESHOLD};
 use crate::rss::{RssEvent, EventDates, write_rss_event_to_file, ResolutionRules as RssResolutionRules};
-use crate::ledger::{TxType, Transaction};
+use crate::ledger::{TxType, Transaction, Layer, FundStatus, MarketData, BetData, reconstruct_transactions_from_market_data};
+
+/// Helper to convert app markets to ledger MarketData
+fn markets_to_market_data(markets: &std::collections::HashMap<String, PredictionMarket>) -> Vec<MarketData> {
+    markets.iter().map(|(id, market)| {
+        MarketData {
+            id: id.clone(),
+            title: market.title.clone(),
+            created_at: market.created_at,
+            total_volume: market.total_volume,
+            is_resolved: market.is_resolved,
+            winning_option: market.winning_option,
+            bets: market.bets.iter().map(|bet| BetData {
+                id: bet.id.clone(),
+                market_id: bet.market_id.clone(),
+                bettor: bet.bettor.clone(),
+                outcome: bet.outcome,
+                amount: bet.amount,
+                timestamp: bet.timestamp,
+                status: bet.status.clone(),
+            }).collect(),
+        }
+    }).collect()
+}
 
 // ===== BET REQUEST =====
 
@@ -704,17 +727,36 @@ pub struct LedgerQuery {
     pub limit: Option<usize>,
     /// Offset for pagination (default: 0)
     pub offset: Option<usize>,
+    /// Filter by layer: "L1", "L2", "Bridge"
+    pub layer: Option<String>,
+    /// Filter by fund status: "Available", "Locked", "Pending", "Settled", "Bridging"
+    pub fund_status: Option<String>,
 }
 
 /// Public ledger transactions endpoint with filtering, sorting, and pagination
+/// Now aggregates from BOTH ledger.transactions AND market.bets for complete picture
 pub async fn get_ledger_transactions(
     State(state): State<SharedState>,
     Query(params): Query<LedgerQuery>,
 ) -> Json<Value> {
     let app = state.lock().unwrap();
     
-    // Get all transactions
-    let mut txs: Vec<_> = app.ledger.transactions.iter().collect();
+    // Reconstruct transactions from markets to get the real data
+    let market_data = markets_to_market_data(&app.markets);
+    let market_txs = reconstruct_transactions_from_market_data(&market_data);
+    
+    // Combine with any ledger transactions (transfers, deposits, etc.)
+    let mut all_txs: Vec<Transaction> = market_txs;
+    
+    // Add non-bet transactions from ledger (transfers, deposits that weren't from markets)
+    for tx in &app.ledger.transactions {
+        if tx.tx_type != TxType::Bet && tx.tx_type != TxType::MarketCreated {
+            all_txs.push(tx.clone());
+        }
+    }
+    
+    // Convert to references for filtering
+    let mut txs: Vec<&Transaction> = all_txs.iter().collect();
     
     // Filter by type
     if let Some(ref type_filter) = params.tx_type {
@@ -725,10 +767,42 @@ pub async fn get_ledger_transactions(
             "withdraw" => Some(TxType::Withdraw),
             "payout" => Some(TxType::Payout),
             "accountcreated" | "account_created" => Some(TxType::AccountCreated),
+            "marketcreated" | "market_created" => Some(TxType::MarketCreated),
+            "marketresolved" | "market_resolved" => Some(TxType::MarketResolved),
+            "bridgeinitiate" | "bridge_initiate" => Some(TxType::BridgeInitiate),
+            "bridgecomplete" | "bridge_complete" => Some(TxType::BridgeComplete),
             _ => None,
         };
         if let Some(t) = tx_type {
             txs.retain(|tx| tx.tx_type == t);
+        }
+    }
+    
+    // Filter by layer
+    if let Some(ref layer_filter) = params.layer {
+        let layer = match layer_filter.to_uppercase().as_str() {
+            "L1" => Some(Layer::L1),
+            "L2" => Some(Layer::L2),
+            "BRIDGE" => Some(Layer::Bridge),
+            _ => None,
+        };
+        if let Some(l) = layer {
+            txs.retain(|tx| tx.layer == l);
+        }
+    }
+    
+    // Filter by fund status
+    if let Some(ref status_filter) = params.fund_status {
+        let status = match status_filter.to_lowercase().as_str() {
+            "available" => Some(FundStatus::Available),
+            "locked" => Some(FundStatus::Locked),
+            "pending" => Some(FundStatus::Pending),
+            "settled" => Some(FundStatus::Settled),
+            "bridging" => Some(FundStatus::Bridging),
+            _ => None,
+        };
+        if let Some(s) = status {
+            txs.retain(|tx| tx.fund_status == s);
         }
     }
     
@@ -783,10 +857,21 @@ pub async fn get_ledger_transactions(
     let offset = params.offset.unwrap_or(0);
     let txs: Vec<_> = txs.into_iter().skip(offset).take(limit).collect();
     
-    // Get ledger stats
-    let stats = app.ledger.stats();
+    // Calculate comprehensive stats
+    let total_bets: usize = all_txs.iter().filter(|t| t.tx_type == TxType::Bet).count();
+    let bet_volume: f64 = all_txs.iter()
+        .filter(|t| t.tx_type == TxType::Bet)
+        .map(|t| t.amount)
+        .sum();
+    let locked_volume: f64 = all_txs.iter()
+        .filter(|t| t.fund_status == FundStatus::Locked)
+        .map(|t| t.amount)
+        .sum();
+    let l1_count = all_txs.iter().filter(|t| t.layer == Layer::L1).count();
+    let l2_count = all_txs.iter().filter(|t| t.layer == Layer::L2).count();
+    let bridge_count = all_txs.iter().filter(|t| t.layer == Layer::Bridge).count();
     
-    // Format transactions for response
+    // Format transactions for response with full L1/L2 tracking
     let transactions: Vec<Value> = txs.iter().map(|tx| {
         json!({
             "id": tx.id,
@@ -797,7 +882,15 @@ pub async fn get_ledger_transactions(
             "market_id": tx.market_id,
             "outcome": tx.outcome,
             "timestamp": tx.timestamp,
-            "signature": if tx.signature.is_empty() { None } else { Some(&tx.signature[..16.min(tx.signature.len())]) }
+            "signature": if tx.signature.is_empty() { None } else { Some(&tx.signature[..16.min(tx.signature.len())]) },
+            // L1/L2 tracking fields
+            "layer": format!("{:?}", tx.layer),
+            "fund_status": format!("{:?}", tx.fund_status),
+            "target_layer": tx.target_layer.map(|l| format!("{:?}", l)),
+            "l1_settled": tx.l1_settled,
+            "l1_tx_hash": tx.l1_tx_hash,
+            "block_number": tx.block_number,
+            "description": tx.description
         })
     }).collect();
     
@@ -811,12 +904,124 @@ pub async fn get_ledger_transactions(
             "has_more": offset + limit < total
         },
         "stats": {
-            "total_accounts": stats.accounts,
-            "total_transactions": stats.transactions,
-            "current_block": stats.block,
-            "total_bets": stats.total_bets,
-            "bet_volume": stats.bet_volume
+            "total_accounts": app.ledger.balances.len(),
+            "total_transactions": all_txs.len(),
+            "current_block": all_txs.len() as u64,
+            "total_bets": total_bets,
+            "bet_volume": bet_volume,
+            "locked_volume": locked_volume,
+            "l1_transactions": l1_count,
+            "l2_transactions": l2_count,
+            "bridge_transactions": bridge_count
         }
+    }))
+}
+
+/// Unified ledger view - comprehensive overview of all L1/L2 activity
+pub async fn get_unified_ledger(State(state): State<SharedState>) -> Json<Value> {
+    let app = state.lock().unwrap();
+    
+    // Reconstruct all transactions from markets
+    let market_data = markets_to_market_data(&app.markets);
+    let all_txs = reconstruct_transactions_from_market_data(&market_data);
+    
+    // Calculate totals by layer
+    let mut l1_volume = 0.0;
+    let mut l2_volume = 0.0;
+    let mut bridge_volume = 0.0;
+    let mut locked_volume = 0.0;
+    let mut pending_volume = 0.0;
+    
+    for tx in &all_txs {
+        match tx.layer {
+            Layer::L1 => l1_volume += tx.amount,
+            Layer::L2 => l2_volume += tx.amount,
+            Layer::Bridge => bridge_volume += tx.amount,
+        }
+        match tx.fund_status {
+            FundStatus::Locked => locked_volume += tx.amount,
+            FundStatus::Pending | FundStatus::Bridging => pending_volume += tx.amount,
+            _ => {}
+        }
+    }
+    
+    // Get unique bettors
+    let unique_bettors: std::collections::HashSet<_> = all_txs.iter()
+        .filter(|tx| tx.tx_type == TxType::Bet)
+        .map(|tx| tx.from.clone())
+        .collect();
+    
+    // Market summaries
+    let market_summaries: Vec<Value> = app.markets.iter().map(|(id, market)| {
+        json!({
+            "id": id,
+            "title": market.title,
+            "status": format!("{:?}", market.market_status),
+            "is_resolved": market.is_resolved,
+            "total_volume": market.total_volume,
+            "bet_count": market.bet_count,
+            "unique_bettors": market.unique_bettors.len()
+        })
+    }).collect();
+    
+    // Recent activity (last 20 transactions)
+    let recent: Vec<Value> = all_txs.iter().rev().take(20).map(|tx| {
+        json!({
+            "id": tx.id,
+            "type": format!("{:?}", tx.tx_type),
+            "from": tx.from,
+            "amount": tx.amount,
+            "market_id": tx.market_id,
+            "timestamp": tx.timestamp,
+            "layer": format!("{:?}", tx.layer),
+            "fund_status": format!("{:?}", tx.fund_status),
+            "description": tx.description
+        })
+    }).collect();
+    
+    Json(json!({
+        "success": true,
+        "overview": {
+            "total_transactions": all_txs.len(),
+            "total_markets": app.markets.len(),
+            "unique_bettors": unique_bettors.len(),
+            "total_bet_volume": l2_volume,
+            "locked_funds": locked_volume,
+            "pending_funds": pending_volume,
+            "bridge_volume": bridge_volume
+        },
+        "by_layer": {
+            "l1": {
+                "volume": l1_volume,
+                "transaction_count": all_txs.iter().filter(|t| t.layer == Layer::L1).count()
+            },
+            "l2": {
+                "volume": l2_volume,
+                "transaction_count": all_txs.iter().filter(|t| t.layer == Layer::L2).count()
+            },
+            "bridge": {
+                "volume": bridge_volume,
+                "transaction_count": all_txs.iter().filter(|t| t.layer == Layer::Bridge).count()
+            }
+        },
+        "by_status": {
+            "available": all_txs.iter().filter(|t| t.fund_status == FundStatus::Available).count(),
+            "locked": all_txs.iter().filter(|t| t.fund_status == FundStatus::Locked).count(),
+            "pending": all_txs.iter().filter(|t| t.fund_status == FundStatus::Pending).count(),
+            "settled": all_txs.iter().filter(|t| t.fund_status == FundStatus::Settled).count(),
+            "bridging": all_txs.iter().filter(|t| t.fund_status == FundStatus::Bridging).count()
+        },
+        "by_type": {
+            "bets": all_txs.iter().filter(|t| t.tx_type == TxType::Bet).count(),
+            "transfers": all_txs.iter().filter(|t| t.tx_type == TxType::Transfer).count(),
+            "deposits": all_txs.iter().filter(|t| t.tx_type == TxType::Deposit).count(),
+            "withdrawals": all_txs.iter().filter(|t| t.tx_type == TxType::Withdraw).count(),
+            "payouts": all_txs.iter().filter(|t| t.tx_type == TxType::Payout).count(),
+            "market_created": all_txs.iter().filter(|t| t.tx_type == TxType::MarketCreated).count(),
+            "market_resolved": all_txs.iter().filter(|t| t.tx_type == TxType::MarketResolved).count()
+        },
+        "markets": market_summaries,
+        "recent_activity": recent
     }))
 }
 
