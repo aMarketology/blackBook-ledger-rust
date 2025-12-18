@@ -233,6 +233,17 @@ pub struct SignedBetResponse {
     pub new_balance: Option<f64>,
     pub nonce_used: Option<u64>,
     pub error: Option<String>,
+    // CPMM pricing fields
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub entry_price: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub shares_purchased: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub price_impact: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub new_price: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub fee_paid: Option<f64>,
 }
 
 impl SignedBetResponse {
@@ -247,6 +258,11 @@ impl SignedBetResponse {
             new_balance: None,
             nonce_used: None,
             error: Some(msg.to_string()),
+            entry_price: None,
+            shares_purchased: None,
+            price_impact: None,
+            new_price: None,
+            fee_paid: None,
         }
     }
 }

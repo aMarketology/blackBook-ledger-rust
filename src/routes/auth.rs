@@ -9,6 +9,9 @@ use serde::Deserialize;
 use serde_json::{json, Value};
 use crate::app_state::SharedState;
 
+// L1 endpoint for balance queries
+const L1_ENDPOINT: &str = "http://localhost:8080";
+
 // ===== REQUEST/RESPONSE TYPES =====
 
 #[derive(Debug, Deserialize)]
@@ -24,11 +27,46 @@ pub struct ConnectWalletRequest {
     pub username: Option<String>,
 }
 
+/// Response from L1 balance endpoint
+#[derive(Debug, Deserialize)]
+struct L1BalanceResponse {
+    address: String,
+    balance: f64,
+    success: bool,
+}
+
+/// Fetch balance from L1 for a wallet address
+async fn fetch_l1_balance(address: &str) -> Option<f64> {
+    let url = format!("{}/balance/{}", L1_ENDPOINT, address);
+    
+    match reqwest::Client::new()
+        .get(&url)
+        .timeout(std::time::Duration::from_secs(5))
+        .send()
+        .await
+    {
+        Ok(response) => {
+            if let Ok(data) = response.json::<L1BalanceResponse>().await {
+                if data.success && data.balance > 0.0 {
+                    println!("📡 L1 balance for {}: {} BB", address, data.balance);
+                    return Some(data.balance);
+                }
+            }
+            None
+        }
+        Err(e) => {
+            println!("⚠️ Failed to fetch L1 balance: {}", e);
+            None
+        }
+    }
+}
+
 // ===== ROUTE HANDLERS =====
 
 /// POST /auth/connect
 /// Simple wallet connection - no JWT, just wallet address
 /// Creates account if new, returns balance if existing
+/// Now fetches real L1 balance for new accounts!
 /// Accepts: { address, public_key, timestamp } or { wallet_address, username }
 pub async fn connect_wallet(
     State(state): State<SharedState>,
@@ -48,6 +86,9 @@ pub async fn connect_wallet(
     }
     
     println!("💳 Wallet connect: {}", wallet_address);
+    
+    // Check L1 balance BEFORE acquiring lock (async operation)
+    let l1_balance = fetch_l1_balance(&wallet_address).await;
 
     let mut app_state = state.lock().unwrap();
     
@@ -69,17 +110,19 @@ pub async fn connect_wallet(
             })
             .to_uppercase();
         
-        // Fund new account with initial balance (30,000 BB - matches L1 for development)
-        let initial_balance = 30_000.0;
+        // Use L1 balance if available, otherwise default to 30,000 BB for development
+        let initial_balance = l1_balance.unwrap_or(30_000.0);
+        let balance_source = if l1_balance.is_some() { "L1" } else { "default" };
+        
         app_state.ledger.register(&username, &wallet_address, initial_balance);
         
-        println!("✅ Funded {} with {} BB", wallet_address, initial_balance);
+        println!("✅ Funded {} with {} BB (source: {})", wallet_address, initial_balance, balance_source);
         
         app_state.log_activity(
             "🆕",
             "NEW_WALLET",
-            &format!("New wallet {} connected | Funded with {} BB", 
-                wallet_address, initial_balance)
+            &format!("New wallet {} connected | Funded with {} BB ({})", 
+                wallet_address, initial_balance, balance_source)
         );
         
         Json(json!({
@@ -87,8 +130,10 @@ pub async fn connect_wallet(
             "wallet_address": wallet_address,
             "username": username,
             "balance": initial_balance,
+            "l1_balance": l1_balance,
+            "balance_source": balance_source,
             "is_new_account": true,
-            "message": format!("Account created and funded with {} BB", initial_balance)
+            "message": format!("Account created and funded with {} BB from {}", initial_balance, balance_source)
         }))
     } else {
         // Existing account - return balance
@@ -108,6 +153,7 @@ pub async fn connect_wallet(
             "wallet_address": wallet_address,
             "username": payload.username,
             "balance": balance,
+            "l1_balance": l1_balance,
             "is_new_account": false
         }))
     }

@@ -99,6 +99,18 @@ impl Balance {
     }
 }
 
+/// Full balance breakdown for API responses
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BalanceBreakdown {
+    pub address: String,
+    pub available: f64,      // Can spend now
+    pub locked: f64,         // In active bets
+    pub pending: f64,        // Awaiting confirmation
+    pub confirmed: f64,      // Synced from L1
+    pub total: f64,          // confirmed + pending
+    pub layer: Layer,        // Where funds reside
+}
+
 /// Transaction types
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub enum TxType {
@@ -367,7 +379,7 @@ impl Ledger {
             .unwrap_or(0.0)
     }
     
-    /// Place a bet
+    /// Place a bet - locks funds until market resolution
     pub fn place_bet(&mut self, from: &str, market_id: &str, outcome: usize, amount: f64, sig: &str) -> Result<Transaction, String> {
         let addr = self.resolve(from).ok_or("Account not found")?;
         let bal = self.balances.get_mut(&addr).ok_or("Balance not found")?;
@@ -376,14 +388,40 @@ impl Ledger {
             return Err(format!("Insufficient balance: {} < {}", bal.available(), amount));
         }
         
-        bal.apply(-amount);
+        // Lock funds for the bet (deduct from available, add to locked)
+        bal.apply(-amount);  // Reduce available balance
+        bal.lock(amount);    // Track as locked in bet
         self.block += 1;
         
-        let tx = Transaction::bet(&addr, market_id, outcome, amount, sig);
+        let mut tx = Transaction::bet(&addr, market_id, outcome, amount, sig);
+        tx.fund_status = FundStatus::Locked; // Mark as locked
         self.transactions.push(tx.clone());
         
-        println!("🎯 Bet: {} wagered {} BB on {} (outcome {})", &addr[..16], amount, market_id, outcome);
+        println!("🎯 Bet: {} wagered {} BB on {} (outcome {}) [🔒 locked]", &addr[..16], amount, market_id, outcome);
         Ok(tx)
+    }
+    
+    /// Get locked balance for an account (funds in active bets)
+    pub fn locked(&self, id: &str) -> f64 {
+        self.resolve(id)
+            .and_then(|addr| self.balances.get(&addr))
+            .map(|b| b.locked)
+            .unwrap_or(0.0)
+    }
+    
+    /// Get full balance breakdown for an account
+    pub fn balance_breakdown(&self, id: &str) -> Option<BalanceBreakdown> {
+        let addr = self.resolve(id)?;
+        let bal = self.balances.get(&addr)?;
+        Some(BalanceBreakdown {
+            address: addr.clone(),
+            available: bal.available(),
+            locked: bal.locked,
+            pending: bal.pending,
+            confirmed: bal.confirmed,
+            total: bal.total(),
+            layer: bal.layer,
+        })
     }
     
     /// Transfer between accounts
@@ -422,18 +460,33 @@ impl Ledger {
         Ok(bal.available())
     }
     
-    /// Payout winnings
+    /// Payout winnings - also unlocks the original bet amount
     pub fn payout(&mut self, to: &str, amount: f64, market_id: &str) -> Result<f64, String> {
         let addr = self.resolve(to).ok_or("Account not found")?;
         let bal = self.balances.get_mut(&addr).ok_or("Balance not found")?;
+        
+        // Add winnings to balance
         bal.apply(amount);
         
         let mut tx = Transaction::new(TxType::Payout, &addr, amount, "");
         tx.market_id = Some(market_id.to_string());
+        tx.fund_status = FundStatus::Settled;
         self.transactions.push(tx);
         
         println!("🏆 Payout: {} won {} BB from {}", &addr[..16], amount, market_id);
         Ok(bal.available())
+    }
+    
+    /// Unlock funds from a resolved bet (loser gets nothing back, but unlock tracking)
+    pub fn unlock_bet(&mut self, account: &str, bet_amount: f64, market_id: &str) -> Result<(), String> {
+        let addr = self.resolve(account).ok_or("Account not found")?;
+        let bal = self.balances.get_mut(&addr).ok_or("Balance not found")?;
+        
+        // Unlock the bet amount from tracking
+        bal.unlock(bet_amount);
+        
+        println!("🔓 Unlocked {} BB for {} from {} (bet resolved)", bet_amount, &addr[..16], market_id);
+        Ok(())
     }
     
     /// Get transactions for an address

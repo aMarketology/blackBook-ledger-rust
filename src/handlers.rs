@@ -91,6 +91,11 @@ pub async fn place_signed_bet(
             new_balance: None,
             nonce_used: None,
             error: Some(format!("Invalid nonce: got {}, expected > {}", req.nonce, last_nonce)),
+            entry_price: None,
+            shares_purchased: None,
+            price_impact: None,
+            new_price: None,
+            fee_paid: None,
         })));
     }
     
@@ -105,7 +110,49 @@ pub async fn place_signed_bet(
         return Err((StatusCode::NOT_FOUND, Json(SignedBetResponse::error("Market not found"))));
     }
     
-    // Place bet
+    // === CPMM DYNAMIC PRICING ===
+    // Execute swap on CPMM pool if it exists, otherwise use static pricing
+    let cpmm_result = {
+        let market = app.markets.get_mut(&req.market_id).unwrap();
+        
+        // Auto-initialize CPMM pool if not present (with default 10k liquidity)
+        if market.cpmm_pool.is_none() {
+            let default_liquidity = 10000.0; // 10,000 BB default
+            let pool = crate::market_resolve::cpmm::CPMMPool::new(
+                default_liquidity,
+                market.options.clone(),
+                &market.escrow_address,
+            );
+            market.cpmm_pool = Some(pool);
+            println!("🔧 Auto-initialized CPMM pool for market {} with {} BB", req.market_id, default_liquidity);
+        }
+        
+        if let Some(ref mut pool) = market.cpmm_pool {
+            // Use buy_with_amount - this is the correct CPMM function
+            // User specifies how much BB to spend, pool calculates shares received
+            match pool.buy_with_amount(outcome, req.amount) {
+                Ok(buy_result) => {
+                    Some((
+                        buy_result.entry_price,
+                        buy_result.shares_received,
+                        buy_result.price_impact,
+                        buy_result.new_price,
+                        buy_result.fee_paid,
+                    ))
+                }
+                Err(e) => {
+                    println!("⚠️ CPMM buy failed: {} - falling back to static pricing", e);
+                    // Fallback: use 50% price, shares = amount
+                    let fallback_price = pool.calculate_prices().get(outcome).copied().unwrap_or(0.5);
+                    Some((fallback_price, req.amount, 0.0, fallback_price, 0.0))
+                }
+            }
+        } else {
+            None
+        }
+    };
+    
+    // Place bet on ledger (deduct balance)
     match app.ledger.place_bet(&account, &req.market_id, outcome, req.amount, &req.signature) {
         Ok(tx) => {
             app.nonces.insert(req.from_address.clone(), req.nonce);
@@ -117,7 +164,16 @@ pub async fn place_signed_bet(
             };
             
             let balance = app.ledger.balance(&account);
-            app.log_activity("🎯", "BET", &format!("{} bet {} BB on {}", account, req.amount, req.market_id));
+            
+            // Extract CPMM pricing info
+            let (entry_price, shares, price_impact, new_price, fee) = cpmm_result
+                .unwrap_or((0.5, req.amount, 0.0, 0.5, 0.0));
+            
+            app.log_activity("🎯", "BET", &format!(
+                "{} bet {} BB on {} @ {:.2}% → {:.2}% (impact: {:.2}%)",
+                account, req.amount, req.market_id,
+                entry_price * 100.0, new_price * 100.0, price_impact * 100.0
+            ));
             
             Ok(Json(SignedBetResponse {
                 success: true,
@@ -129,6 +185,11 @@ pub async fn place_signed_bet(
                 new_balance: Some(balance),
                 nonce_used: Some(req.nonce),
                 error: None,
+                entry_price: Some(entry_price),
+                shares_purchased: Some(shares),
+                price_impact: Some(price_impact),
+                new_price: Some(new_price),
+                fee_paid: Some(fee),
             }))
         }
         Err(e) => Err((StatusCode::BAD_REQUEST, Json(SignedBetResponse::error(&e)))),
@@ -180,6 +241,153 @@ pub async fn get_market(
         "resolution_rules": m.resolution_rules,
         "created_at": m.created_at
     })))
+}
+
+/// GET /markets/:id/prices - Get current CPMM prices and pool info for a market
+pub async fn get_market_prices(
+    State(state): State<SharedState>,
+    Path(id): Path<String>,
+) -> Result<Json<Value>, StatusCode> {
+    let app = state.lock().unwrap();
+    let market = app.markets.get(&id).ok_or(StatusCode::NOT_FOUND)?;
+    
+    // Calculate volume per side from option_stats
+    let volume_per_side: Vec<Value> = market.options.iter()
+        .enumerate()
+        .map(|(i, label)| {
+            let stats = market.option_stats.get(i);
+            let volume = stats.map(|s| s.total_volume).unwrap_or(0.0);
+            let bet_count = stats.map(|s| s.bet_count).unwrap_or(0);
+            let unique_bettors = stats.map(|s| s.unique_bettors.len()).unwrap_or(0);
+            json!({
+                "outcome_index": i,
+                "label": label,
+                "total_volume_bb": volume,
+                "bet_count": bet_count,
+                "unique_bettors": unique_bettors,
+            })
+        })
+        .collect();
+    
+    // Get CPMM pool info if available
+    if let Some(ref pool) = market.cpmm_pool {
+        let prices = pool.calculate_prices();
+        let tvl = pool.get_tvl();
+        
+        // Build outcome details with prices AND volume
+        let outcome_prices: Vec<Value> = market.options.iter()
+            .enumerate()
+            .map(|(i, label)| {
+                let price = prices.get(i).copied().unwrap_or(0.5);
+                let reserve = pool.reserves.get(i).copied().unwrap_or(0.0);
+                let stats = market.option_stats.get(i);
+                let volume = stats.map(|s| s.total_volume).unwrap_or(0.0);
+                let bet_count = stats.map(|s| s.bet_count).unwrap_or(0);
+                json!({
+                    "index": i,
+                    "label": label,
+                    "price": price,
+                    "probability_percent": price * 100.0,
+                    "reserve": reserve,
+                    "total_volume_bb": volume,
+                    "bet_count": bet_count,
+                })
+            })
+            .collect();
+        
+        // Calculate price impact for sample amounts using buy_with_amount simulation
+        let sample_amounts = vec![10.0, 50.0, 100.0, 500.0, 1000.0];
+        let price_impacts: Vec<Value> = sample_amounts.iter()
+            .map(|&amount| {
+                // Simulate a buy to calculate impact
+                let entry_price = prices.get(0).copied().unwrap_or(0.5);
+                
+                // For constant product: shares_out = x - k/(y + amount_after_fee)
+                let fee = amount * crate::market_resolve::cpmm::LP_FEE_RATE;
+                let amount_after_fee = amount - fee;
+                
+                if pool.reserves.len() == 2 {
+                    let x = pool.reserves[0];
+                    let y = pool.reserves[1];
+                    let new_y = y + amount_after_fee;
+                    let shares_out = x - (pool.k / new_y);
+                    let effective_price = if shares_out > 0.0 { amount / shares_out } else { entry_price };
+                    let price_impact = effective_price - entry_price;
+                    json!({
+                        "amount_bb": amount,
+                        "estimated_shares": shares_out.max(0.0),
+                        "effective_price": effective_price,
+                        "price_impact_percent": price_impact * 100.0,
+                        "fee": fee,
+                    })
+                } else {
+                    // Multi-outcome approximation
+                    let shares = amount_after_fee / entry_price.max(0.01);
+                    json!({
+                        "amount_bb": amount,
+                        "estimated_shares": shares,
+                        "effective_price": entry_price,
+                        "price_impact_percent": 0.0,
+                        "fee": fee,
+                    })
+                }
+            })
+            .collect();
+        
+        Ok(Json(json!({
+            "market_id": id,
+            "cpmm_enabled": true,
+            "prices": outcome_prices,
+            "volume_by_outcome": volume_per_side,
+            "total_market_volume": market.total_volume,
+            "total_bets": market.bet_count,
+            "unique_bettors": market.unique_bettors.len(),
+            "pool": {
+                "tvl": tvl,
+                "reserves": pool.reserves,
+                "k": pool.k,
+                "fees_collected": pool.fees_collected,
+                "lp_token_supply": pool.total_lp_tokens,
+            },
+            "price_impacts": price_impacts,
+            "fee_rate": crate::market_resolve::cpmm::LP_FEE_RATE,
+        })))
+    } else {
+        // Fallback to static odds
+        let odds = market.calculate_odds();
+        let outcome_prices: Vec<Value> = market.options.iter()
+            .enumerate()
+            .map(|(i, label)| {
+                let price = odds.get(i).copied().unwrap_or(0.5);
+                let stats = market.option_stats.get(i);
+                let volume = stats.map(|s| s.total_volume).unwrap_or(0.0);
+                let bet_count = stats.map(|s| s.bet_count).unwrap_or(0);
+                json!({
+                    "index": i,
+                    "label": label,
+                    "price": price,
+                    "probability_percent": price * 100.0,
+                    "reserve": 0.0,
+                    "total_volume_bb": volume,
+                    "bet_count": bet_count,
+                })
+            })
+            .collect();
+        
+        Ok(Json(json!({
+            "market_id": id,
+            "cpmm_enabled": false,
+            "prices": outcome_prices,
+            "volume_by_outcome": volume_per_side,
+            "total_market_volume": market.total_volume,
+            "total_bets": market.bet_count,
+            "unique_bettors": market.unique_bettors.len(),
+            "pool": null,
+            "price_impacts": [],
+            "fee_rate": 0.0,
+            "note": "CPMM pool not initialized - using static volume-weighted odds"
+        })))
+    }
 }
 
 pub async fn create_market(
@@ -656,6 +864,278 @@ async fn transfer_l1_to_escrow(from: &str, to_escrow: &str, amount: f64) -> Resu
     }
 }
 
+// ============================================================================
+// DEALER / MARKET MAKER ENDPOINTS
+// ============================================================================
+
+/// Request for dealer to fund all markets
+#[derive(Debug, Deserialize)]
+pub struct DealerFundAllRequest {
+    /// Dealer's wallet address
+    pub dealer_address: String,
+    /// Amount of BB per market (default: 2083)
+    pub amount_per_market: Option<f64>,
+    /// Only fund markets without existing pools
+    #[serde(default = "default_true")]
+    pub skip_existing: bool,
+}
+
+fn default_true() -> bool { true }
+
+/// POST /dealer/fund-all-markets
+/// Dealer funds ALL markets with CPMM liquidity from their L2 balance
+/// The dealer becomes the LP (market maker) and earns fees on trades
+pub async fn dealer_fund_all_markets(
+    State(state): State<SharedState>,
+    Json(req): Json<DealerFundAllRequest>,
+) -> Json<Value> {
+    let amount_per_market = req.amount_per_market.unwrap_or(2083.0);
+    
+    // Phase 1: Check dealer balance and collect markets (inside lock)
+    let (dealer_balance, markets_to_fund): (f64, Vec<(String, String, Vec<String>, bool)>) = {
+        let app = state.lock().unwrap();
+        let balance = app.ledger.balance(&req.dealer_address);
+        
+        let markets: Vec<_> = app.markets.iter()
+            .map(|(id, market)| {
+                let has_pool = market.cpmm_pool.is_some();
+                (id.clone(), market.title.clone(), market.options.clone(), has_pool)
+            })
+            .collect();
+        
+        (balance, markets)
+    };
+    
+    // Filter markets based on skip_existing flag
+    let markets_to_process: Vec<_> = markets_to_fund.iter()
+        .filter(|(_, _, _, has_pool)| !req.skip_existing || !has_pool)
+        .collect();
+    
+    let total_required = markets_to_process.len() as f64 * amount_per_market;
+    
+    // Validate dealer has enough balance
+    if dealer_balance < total_required {
+        return Json(json!({
+            "success": false,
+            "error": "Insufficient dealer balance",
+            "dealer_address": req.dealer_address,
+            "dealer_balance": dealer_balance,
+            "required": total_required,
+            "markets_to_fund": markets_to_process.len(),
+            "amount_per_market": amount_per_market
+        }));
+    }
+    
+    // Phase 2: Fund each market
+    let mut funded: Vec<Value> = Vec::new();
+    let mut skipped: Vec<Value> = Vec::new();
+    let mut failed: Vec<Value> = Vec::new();
+    
+    for (market_id, title, options, has_pool) in &markets_to_fund {
+        if req.skip_existing && *has_pool {
+            skipped.push(json!({
+                "market_id": market_id,
+                "title": title,
+                "reason": "Already has CPMM pool"
+            }));
+            continue;
+        }
+        
+        let mut app = state.lock().unwrap();
+        
+        // Check dealer still has balance
+        let current_balance = app.ledger.balance(&req.dealer_address);
+        if current_balance < amount_per_market {
+            failed.push(json!({
+                "market_id": market_id,
+                "title": title,
+                "error": "Insufficient balance mid-process",
+                "remaining_balance": current_balance
+            }));
+            continue;
+        }
+        
+        // Deduct from dealer balance
+        if let Some(addr) = app.ledger.resolve(&req.dealer_address) {
+            if let Some(bal) = app.ledger.balances.get_mut(&addr) {
+                bal.apply(-amount_per_market);
+            }
+        }
+        
+        // Initialize or add to CPMM pool with dealer as LP
+        if let Some(market) = app.markets.get_mut(market_id) {
+            if market.cpmm_pool.is_none() {
+                // Create new pool with dealer as LP
+                let pool = CPMMPool::new(
+                    amount_per_market,
+                    options.clone(),
+                    &req.dealer_address, // Dealer is the LP!
+                );
+                let prices = pool.calculate_prices();
+                market.cpmm_pool = Some(pool);
+                market.initial_probabilities = prices.clone();
+                market.launched_by = Some(req.dealer_address.clone());
+                
+                // Record to ledger
+                let tx = Transaction::liquidity_added(
+                    market_id,
+                    &req.dealer_address,
+                    amount_per_market,
+                    &format!("dealer_lp_{}", market_id)
+                );
+                app.ledger.record(tx);
+                
+                app.log_activity("🎰", "DEALER_LP", &format!(
+                    "Dealer funded {} with {} BB | Odds: {:?}",
+                    title, amount_per_market, prices
+                ));
+                
+                funded.push(json!({
+                    "market_id": market_id,
+                    "title": title,
+                    "liquidity": amount_per_market,
+                    "dealer_lp_share": 1.0,
+                    "initial_odds": prices
+                }));
+            } else {
+                // Add liquidity to existing pool
+                if let Some(ref mut pool) = market.cpmm_pool {
+                    match pool.add_liquidity(&req.dealer_address, amount_per_market) {
+                        Ok(share) => {
+                            let prices = pool.calculate_prices();
+                            
+                            let tx = Transaction::liquidity_added(
+                                market_id,
+                                &req.dealer_address,
+                                amount_per_market,
+                                &format!("dealer_add_lp_{}", market_id)
+                            );
+                            app.ledger.record(tx);
+                            
+                            app.log_activity("🎰", "DEALER_LP_ADD", &format!(
+                                "Dealer added {} BB to {} | New share: {:.2}%",
+                                amount_per_market, title, share * 100.0
+                            ));
+                            
+                            funded.push(json!({
+                                "market_id": market_id,
+                                "title": title,
+                                "liquidity_added": amount_per_market,
+                                "dealer_lp_share": share,
+                                "current_odds": prices
+                            }));
+                        }
+                        Err(e) => {
+                            // Refund dealer
+                            if let Some(addr) = app.ledger.resolve(&req.dealer_address) {
+                                if let Some(bal) = app.ledger.balances.get_mut(&addr) {
+                                    bal.apply(amount_per_market);
+                                }
+                            }
+                            failed.push(json!({
+                                "market_id": market_id,
+                                "title": title,
+                                "error": e
+                            }));
+                        }
+                    }
+                }
+            }
+        }
+    }
+    
+    // Final summary
+    let app = state.lock().unwrap();
+    let new_balance = app.ledger.balance(&req.dealer_address);
+    let total_funded = funded.len() as f64 * amount_per_market;
+    
+    Json(json!({
+        "success": true,
+        "dealer": {
+            "address": req.dealer_address,
+            "initial_balance": dealer_balance,
+            "new_balance": new_balance,
+            "total_spent": total_funded
+        },
+        "summary": {
+            "markets_funded": funded.len(),
+            "markets_skipped": skipped.len(),
+            "markets_failed": failed.len(),
+            "amount_per_market": amount_per_market,
+            "total_liquidity_provided": total_funded
+        },
+        "funded_markets": funded,
+        "skipped_markets": skipped,
+        "failed_markets": failed,
+        "lp_benefits": {
+            "fee_rate": "2% per trade",
+            "description": "Dealer earns LP fees on all trades in funded markets",
+            "claim_on_resolution": "Remaining pool liquidity + collected fees"
+        }
+    }))
+}
+
+/// GET /dealer/positions/:address
+/// Get dealer's LP positions across all markets
+pub async fn get_dealer_positions(
+    State(state): State<SharedState>,
+    Path(dealer_address): Path<String>,
+) -> Json<Value> {
+    let app = state.lock().unwrap();
+    
+    let mut positions: Vec<Value> = Vec::new();
+    let mut total_liquidity = 0.0;
+    let mut total_fees_earned = 0.0;
+    
+    for (market_id, market) in app.markets.iter() {
+        if let Some(ref pool) = market.cpmm_pool {
+            if let Some(&lp_share) = pool.lp_shares.get(&dealer_address) {
+                if lp_share > 0.0 {
+                    let tvl = pool.get_tvl();
+                    let position_value = tvl * lp_share;
+                    let fees_share = pool.fees_collected * lp_share;
+                    
+                    total_liquidity += position_value;
+                    total_fees_earned += fees_share;
+                    
+                    positions.push(json!({
+                        "market_id": market_id,
+                        "title": market.title,
+                        "lp_share_percent": lp_share * 100.0,
+                        "position_value": position_value,
+                        "fees_earned": fees_share,
+                        "pool_tvl": tvl,
+                        "pool_fees_collected": pool.fees_collected,
+                        "current_odds": pool.calculate_prices(),
+                        "market_status": format!("{:?}", market.market_status),
+                        "is_resolved": market.is_resolved
+                    }));
+                }
+            }
+        }
+    }
+    
+    let balance = app.ledger.balance(&dealer_address);
+    let locked = app.ledger.locked(&dealer_address);
+    
+    Json(json!({
+        "success": true,
+        "dealer_address": dealer_address,
+        "wallet": {
+            "available_balance": balance,
+            "locked_in_bets": locked,
+            "total_lp_value": total_liquidity
+        },
+        "lp_summary": {
+            "total_positions": positions.len(),
+            "total_liquidity_value": total_liquidity,
+            "total_fees_earned": total_fees_earned,
+            "net_position_value": total_liquidity + total_fees_earned
+        },
+        "positions": positions
+    }))
+}
+
 // ===== BALANCE ENDPOINTS =====
 
 pub async fn get_balance(State(state): State<SharedState>, Path(account): Path<String>) -> Json<Value> {
@@ -663,24 +1143,53 @@ pub async fn get_balance(State(state): State<SharedState>, Path(account): Path<S
     let balance = app.ledger.balance(&account);
     let confirmed = app.ledger.confirmed_balance(&account);
     let pending = app.ledger.pending(&account);
+    let locked = app.ledger.locked(&account);
     Json(json!({ 
         "account": account, 
         "balance": balance,
         "confirmed": confirmed,
-        "pending": pending
+        "pending": pending,
+        "locked": locked,
+        "available": balance - locked
     }))
 }
 
 pub async fn get_balance_details(State(state): State<SharedState>, Path(account): Path<String>) -> Json<Value> {
     let app = state.lock().unwrap();
     let addr = app.ledger.resolve(&account).unwrap_or(account.clone());
+    let locked = app.ledger.locked(&account);
+    let available = app.ledger.balance(&account);
+    
+    // Get breakdown if available
+    if let Some(breakdown) = app.ledger.balance_breakdown(&account) {
+        return Json(json!({
+            "success": true,
+            "account": account,
+            "address": addr,
+            "breakdown": {
+                "available": breakdown.available,
+                "locked": breakdown.locked,
+                "pending": breakdown.pending,
+                "confirmed": breakdown.confirmed,
+                "total": breakdown.total,
+                "layer": format!("{:?}", breakdown.layer),
+            },
+            // Legacy fields for compatibility
+            "confirmed_balance": breakdown.confirmed,
+            "pending_delta": breakdown.pending,
+            "available_balance": breakdown.available,
+            "locked_in_bets": breakdown.locked,
+        }));
+    }
+    
     Json(json!({
         "success": true,
         "account": account,
         "address": addr,
         "confirmed_balance": app.ledger.confirmed_balance(&account),
         "pending_delta": app.ledger.pending(&account),
-        "available_balance": app.ledger.balance(&account),
+        "available_balance": available,
+        "locked_in_bets": locked,
     }))
 }
 

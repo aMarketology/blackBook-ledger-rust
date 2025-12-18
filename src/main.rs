@@ -52,12 +52,17 @@ async fn main() {
         .route("/markets/initial-liquidity/:market_id", post(initialize_market_liquidity))
         .route("/markets/:id", get(get_market))
         .route("/markets/:id/odds", get(get_market_odds))
+        .route("/markets/:id/prices", get(get_market_prices))  // CPMM dynamic prices
         .route("/markets/:id/resolution", get(get_market_resolution))
         
         // ===== MARKET RESOLUTION ENDPOINTS =====
         .route("/markets/:id/resolve", post(resolve_market))
         .route("/resolve/:market_id/:outcome", post(admin_resolve_market))  // SDK compatibility
         .route("/admin/resolve/:market_id/:outcome", post(admin_resolve_market))
+        
+        // ===== DEALER / MARKET MAKER ENDPOINTS =====
+        .route("/dealer/fund-all-markets", post(dealer_fund_all_markets))
+        .route("/dealer/positions/:address", get(get_dealer_positions))
         
         // ===== AUTHENTICATION ENDPOINTS (NO JWT - CRYPTOGRAPHIC SIGNATURES ONLY) =====
         .route("/auth/connect", post(connect_wallet))

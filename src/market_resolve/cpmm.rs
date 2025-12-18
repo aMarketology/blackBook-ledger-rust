@@ -464,6 +464,137 @@ impl CPMMPool {
         })
     }
     
+    /// Buy outcome shares by spending a fixed BB amount
+    /// This is the PRIMARY method for placing bets - you specify how much BB to spend
+    /// and the CPMM calculates how many shares you receive based on the bonding curve.
+    /// 
+    /// # Arguments
+    /// * `outcome_index` - Which outcome to buy (0 = YES, 1 = NO for binary)
+    /// * `bb_amount` - Amount of BB tokens to spend
+    /// 
+    /// # Returns
+    /// Ok(BuyResult) with shares received and price info, or Err
+    pub fn buy_with_amount(&mut self, outcome_index: usize, bb_amount: f64) -> Result<BuyResult, String> {
+        if outcome_index >= self.reserves.len() {
+            return Err(format!("Invalid outcome index: {}", outcome_index));
+        }
+        
+        if bb_amount <= 0.0 {
+            return Err("Amount must be positive".to_string());
+        }
+        
+        // Get current prices before the trade
+        let prices_before = self.calculate_prices();
+        let entry_price = prices_before.get(outcome_index).copied().unwrap_or(0.5);
+        
+        // For binary market with constant product: x * y = k
+        // User pays `bb_amount` which gets added to the OTHER side
+        // We need to calculate how many shares they receive
+        
+        if self.reserves.len() == 2 {
+            // Binary market - use exact constant product formula
+            let other_index = 1 - outcome_index;
+            
+            // Fee is taken from the input amount
+            let fee = bb_amount * LP_FEE_RATE;
+            let amount_after_fee = bb_amount - fee;
+            
+            // Current reserves
+            let x = self.reserves[outcome_index];  // e.g., YES tokens
+            let y = self.reserves[other_index];    // e.g., NO tokens
+            
+            // After trade: (x - shares_out) * (y + amount_in) = k
+            // Solving for shares_out: shares_out = x - k / (y + amount_in)
+            let new_y = y + amount_after_fee;
+            let shares_out = x - (self.k / new_y);
+            
+            if shares_out <= 0.0 {
+                return Err("Trade too small to receive any shares".to_string());
+            }
+            
+            if shares_out >= x {
+                return Err(format!("Cannot buy {} shares, only {} in pool", shares_out, x));
+            }
+            
+            // Execute the trade
+            self.reserves[outcome_index] = x - shares_out;
+            self.reserves[other_index] = new_y;
+            self.fees_collected += fee;
+            
+            // Recalculate k for precision
+            self.k = self.reserves.iter().product();
+            
+            let new_prices = self.calculate_prices();
+            let new_price = new_prices[outcome_index];
+            let price_impact = new_price - entry_price;
+            
+            // Effective price = BB spent / shares received
+            let effective_price = bb_amount / shares_out;
+            
+            Ok(BuyResult {
+                outcome_index,
+                outcome_label: self.outcome_labels[outcome_index].clone(),
+                bb_spent: bb_amount,
+                shares_received: shares_out,
+                entry_price,
+                effective_price,
+                new_price,
+                price_impact,
+                fee_paid: fee,
+                new_prices,
+            })
+        } else {
+            // Multi-outcome market - use approximation
+            // shares ≈ amount * (1 - fee) / price
+            let fee = bb_amount * LP_FEE_RATE;
+            let amount_after_fee = bb_amount - fee;
+            let shares_out = amount_after_fee / entry_price.max(0.01);
+            
+            // Limit shares to available reserves
+            let max_shares = self.reserves[outcome_index] * 0.9; // Max 90% of pool
+            let actual_shares = shares_out.min(max_shares);
+            
+            if actual_shares <= 0.0 {
+                return Err("Trade too small".to_string());
+            }
+            
+            // Execute trade
+            self.reserves[outcome_index] -= actual_shares;
+            
+            // Distribute input across other outcomes proportionally
+            let total_other: f64 = self.reserves.iter()
+                .enumerate()
+                .filter(|(i, _)| *i != outcome_index)
+                .map(|(_, r)| r)
+                .sum();
+            
+            for (i, reserve) in self.reserves.iter_mut().enumerate() {
+                if i != outcome_index && total_other > 0.0 {
+                    *reserve += amount_after_fee * (*reserve / total_other);
+                }
+            }
+            
+            self.fees_collected += fee;
+            self.k = self.reserves.iter().product();
+            
+            let new_prices = self.calculate_prices();
+            let new_price = new_prices[outcome_index];
+            
+            Ok(BuyResult {
+                outcome_index,
+                outcome_label: self.outcome_labels[outcome_index].clone(),
+                bb_spent: bb_amount,
+                shares_received: actual_shares,
+                entry_price,
+                effective_price: bb_amount / actual_shares,
+                new_price,
+                price_impact: new_price - entry_price,
+                fee_paid: fee,
+                new_prices,
+            })
+        }
+    }
+    
     /// Add liquidity to the pool (become an LP)
     /// 
     /// # Arguments
@@ -608,6 +739,21 @@ pub struct SwapResult {
     pub old_price: f64,
     pub new_price: f64,
     pub new_prices: Vec<f64>,
+}
+
+/// Result of buying with a fixed BB amount
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BuyResult {
+    pub outcome_index: usize,
+    pub outcome_label: String,
+    pub bb_spent: f64,           // Total BB spent (including fees)
+    pub shares_received: f64,    // Number of outcome shares received
+    pub entry_price: f64,        // Price before the trade
+    pub effective_price: f64,    // Actual price paid (bb_spent / shares_received)
+    pub new_price: f64,          // Price after the trade
+    pub price_impact: f64,       // new_price - entry_price
+    pub fee_paid: f64,           // Fee taken from the trade
+    pub new_prices: Vec<f64>,    // All outcome prices after trade
 }
 
 // ============================================================================
